@@ -621,6 +621,15 @@ class MobileSessionStore:
             raise MobileApiError(404, "UNSUPPORTED", "Session was not found or has expired.")
         return session
 
+    async def validate_session(self, session_id: str) -> MobileSession:
+        """Public existence/expiry check with the exact semantics ``_require_session``
+        already gives every REST route. Used by the WebSocket assistant endpoint
+        (``app/api/routes/assistant_ws.py``) to gate the connection at handshake time,
+        since WebSocket has no equivalent of FastAPI's HTTPException-based exception
+        handlers to translate ``MobileApiError`` automatically."""
+        async with self._lock:
+            return self._require_session(session_id)
+
     def _purge_expired_sessions(self, timestamp: int) -> None:
         expired_ids = [
             session_id

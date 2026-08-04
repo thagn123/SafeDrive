@@ -22,12 +22,19 @@ class RemoteSafeDriveGatewayContractTest : SafeDriveGatewayContractTest() {
 
     @After
     fun stopServer() {
-        server.shutdown()
+        // A WebSocket connection that hasn't fully drained yet can make MockWebServer's own
+        // shutdown time out waiting for its per-connection thread -- unrelated to whether the
+        // test's own assertions passed.
+        runCatching { server.shutdown() }
     }
 
     override fun buildGateway(): SafeDriveGateway {
         val retrofit = NetworkModule.createRetrofit(server.url("/").toString(), allowCleartext = true)
-        return RemoteSafeDriveGateway(retrofit.create(SafeDriveApi::class.java))
+        val socketClient = AssistantSocketClient(
+            NetworkModule.createOkHttpClient(allowCleartext = true),
+            server.url("/").toString(),
+        )
+        return RemoteSafeDriveGateway(retrofit.create(SafeDriveApi::class.java), socketClient)
     }
 
     override fun sampleVehicleState() = vehicleStateFixture()

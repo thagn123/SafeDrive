@@ -29,13 +29,20 @@ object NetworkModule {
         explicitNulls = false
     }
 
-    fun createRetrofit(
-        baseUrl: String,
+    /**
+     * Builds the shared [OkHttpClient] used for both Retrofit (HTTP) and
+     * [vn.edu.haui.hvs.safedrive.data.remote.AssistantSocketClient] (WebSocket) against a
+     * given `baseUrl`. Read/connect/write timeouts govern HTTP calls only -- OkHttp's
+     * WebSocket connections are not subject to `readTimeout` once the upgrade completes
+     * (see `AssistantSocketClient`'s own liveness handling), so callers using this client for
+     * a socket must implement their own liveness/backstop timeout rather than relying on this.
+     */
+    fun createOkHttpClient(
         allowCleartext: Boolean,
         connectTimeoutSeconds: Long = CONNECT_TIMEOUT_S,
         readTimeoutSeconds: Long = READ_TIMEOUT_S,
         writeTimeoutSeconds: Long = WRITE_TIMEOUT_S,
-    ): Retrofit {
+    ): OkHttpClient {
         val clientBuilder = OkHttpClient.Builder()
             .connectTimeout(connectTimeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
@@ -46,11 +53,30 @@ object NetworkModule {
             // see RemoteSafeDriveGateway's callers and the release network security config).
             clientBuilder.addInterceptor(RedactingLoggingInterceptor { message -> Log.d("SafeDriveNetwork", message) })
         }
+        return clientBuilder.build()
+    }
 
+    fun createRetrofit(
+        baseUrl: String,
+        allowCleartext: Boolean,
+        connectTimeoutSeconds: Long = CONNECT_TIMEOUT_S,
+        readTimeoutSeconds: Long = READ_TIMEOUT_S,
+        writeTimeoutSeconds: Long = WRITE_TIMEOUT_S,
+    ): Retrofit {
+        val client = createOkHttpClient(
+            allowCleartext,
+            connectTimeoutSeconds,
+            readTimeoutSeconds,
+            writeTimeoutSeconds,
+        )
+        return buildRetrofit(baseUrl, client)
+    }
+
+    fun buildRetrofit(baseUrl: String, client: OkHttpClient): Retrofit {
         val contentType = "application/json".toMediaType()
         return Retrofit.Builder()
             .baseUrl(baseUrl)
-            .client(clientBuilder.build())
+            .client(client)
             .addConverterFactory(json.asConverterFactory(contentType))
             .build()
     }

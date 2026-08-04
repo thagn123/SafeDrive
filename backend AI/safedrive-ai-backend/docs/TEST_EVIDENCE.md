@@ -8,7 +8,7 @@ estimates.
 ```bash
 uv run pytest -q
 ```
-→ **228 passed** in ~9-10s (no skips, no xfails).
+→ **234 passed** (228 + 6 new in `tests/test_assistant_ws.py`) in ~15s (no skips, no xfails).
 
 ```bash
 uv run ruff check app tests
@@ -20,13 +20,13 @@ uv run ruff check app tests
 ```bash
 gradlew.bat clean testDebugUnitTest lintDebug assembleDebug
 ```
-→ **BUILD SUCCESSFUL**. Parsed from `app/build/test-results/testDebugUnitTest/*.xml` (31 suite
-files): **325 tests, 0 failures, 0 errors, 0 skipped**. This was a `clean` build — not cached
+→ **BUILD SUCCESSFUL**. Parsed from `app/build/test-results/testDebugUnitTest/*.xml` (32 suite
+files): **332 tests, 0 failures, 0 errors, 0 skipped**. This was a `clean` build — not cached
 results. `lintDebug`: 14 findings, all informational/warning severity (pre-existing Compose icon
 deprecation warnings), zero blocking errors.
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`, 20,784,552 bytes.
-SHA-256: `b8aa6e8db937395be6f83dd4ce5a6776b62321d22937645a97871c279df98172`
+APK: `app/build/outputs/apk/debug/app-debug.apk`, 20,800,936 bytes.
+SHA-256: `1c4f3a56a09ecc61e4ed94d538b3203e0b1ef4b1fa8147822d54a575b17c16cd`
 
 ## Real Ollama evidence (live model, not mocked HTTP)
 
@@ -97,3 +97,75 @@ connectivity/session evidence above is genuinely device-originated; the specific
 (engine temperature, DTC conflict, etc.) were verified against the identical, currently-running
 backend code via direct requests rather than via on-device taps. See Known Limitations for the exact
 next step to close this gap.
+
+## Manual on-device acceptance testing (human taps, not ADB) — follow-up session
+
+The gap above was closed for scenarios 1/2/4: a human manually tapped through the real device (ADB
+input injection is blocked, but the device owner's own touches are not). This surfaced two real,
+reproducible bugs neither prior automated pass had caught, both now fixed.
+
+**Bug 1 — cold-start Ollama exceeds the client's fixed 8s read timeout.** Reproduced by replaying
+the exact same on-device query against the exact same live backend: `serverProcessingMs=14564`
+(cold), while the Android client's `READ_TIMEOUT_S` was `8L`. Real device symptom: "Yêu cầu quá
+thời gian chờ" (request timed out) on the very first chat message.
+
+**Bug 2 — ambiguous-phrasing intent reclassification is a second, slow LLM call.** A message the
+deterministic router can't confidently route (e.g. "cho tôi lời khuyên để lái xe an toàn hơn")
+triggers `OllamaIntentClassifier` before any reply is produced. Measured **9.6-10.1s** for that
+classification call alone — exceeding the 8s budget even when the eventual answer is fully
+deterministic (`llmUsed=false`).
+
+**Fix**: `/api/v1/ws/assistant` (WebSocket, heartbeat every ~2s) replaces the one-shot HTTP call for
+assistant queries; the Android client now waits based on connection liveness instead of a fixed
+wall-clock guess. See `docs/ARCHITECTURE.md`'s "Assistant chat transport" section. Verified so far:
+backend `tests/test_assistant_ws.py` (6 tests, including a heartbeats-during-a-slow-call case) and
+Android `AssistantSocketClientTest`/`RemoteSafeDriveGatewayErrorMappingTest` (real `MockWebServer`
+WebSocket round-trips). **Not yet re-verified on the physical device** — the exact on-device retry
+of the scenario that originally failed (cold Ollama + ambiguous phrasing) is the next step; see
+`docs/KNOWN_LIMITATIONS.md`.
+
+**Scenarios confirmed via genuine on-device taps this session** (screenshots + matching backend
+request evidence, not curl):
+- **Scenario 1 (normal LLM answer)**: "tôi cần nói chuyện" → `route=companion.conversation`,
+  `model=ollama/qwen2.5:7b-instruct-q4_K_M`, `llmUsed=true`, grounded text (99 km/h, cabin 25.68°C,
+  135 min — all matching live state).
+- **Scenario 2 (rest recommendation)**: "Tôi đang cảm thấy mệt" → deterministic fatigue route,
+  recommends a safe stop, no fabricated camera/DMS evidence or POI/distance.
+- **Scenario 4 (engine CRITICAL)**: Simulator set to 116.275°C → CRITICAL card,
+  `reasonCode=engine_overheat_critical`, `model=deterministic-context-router`, `latency=0ms` (no
+  LLM call attempted), no SOS triggered by engine temp alone.
+
+**Also discovered and confirmed as correct behavior (not a bug)**: `emergency_candidate` (set by a
+live crash signal) blocks LLM narration independently of the displayed `risk.level` — a lingering
+crash toggle in the Simulator caused a MEDIUM-risk chat message to still return a deterministic
+reply. This is `_can_narrate`'s `not safety.emergency_candidate` gate working as designed
+(`app/mobile/session_store.py`), not a defect.
+
+## WebSocket fix verified through the real Docker deployment path
+
+`docker compose build && docker compose up -d` → container healthy, then a real `websockets`-library
+client connected to `ws://127.0.0.1:8000/api/v1/ws/assistant` through the container (not bare-metal),
+reaching the real host Ollama:
+
+**Cold call** (first request of the container's session, matching the on-device failure mode above):
+```
+8 heartbeat frames over 16.2s, then:
+type: final, llmUsed: true, fallback: false
+model: ollama/qwen2.5:7b-instruct-q4_K_M
+```
+This is the exact scenario that used to fail at the client's old fixed 8s timeout — the connection
+stayed alive and demonstrably working the whole 16.2s via heartbeats, with no timeout.
+
+**Warm call** (immediately after, same container):
+```
+0 heartbeats, final frame at t+1.9s
+serverProcessingMs: 1883, llmUsed: true, fallback: false
+text: "Xe đang chạy 72 km/h, cabin 25 độ C. Bạn đã lái khoảng 20 phút rồi. Nếu bạn bắt đầu
+       mệt, hãy nói với tôi hoặc dừng ở vị trí an toàn khi có thể."
+```
+Grounded (72 km/h / 25°C / 20 min all match the input state exactly), fast path unaffected.
+
+**Note**: this run also found and cleaned up an unrelated stale host-level `uvicorn` process (left
+running from earlier in this project on port 8000, predating this WebSocket work) that was
+intercepting requests intended for the container — a leftover from prior manual testing, not a
+defect in this change.

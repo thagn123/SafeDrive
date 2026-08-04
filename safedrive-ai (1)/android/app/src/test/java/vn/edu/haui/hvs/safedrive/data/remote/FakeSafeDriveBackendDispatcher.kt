@@ -1,5 +1,8 @@
 package vn.edu.haui.hvs.safedrive.data.remote
 
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.RecordedRequest
@@ -7,18 +10,29 @@ import okhttp3.mockwebserver.RecordedRequest
 /**
  * Tiny fake backend for [RemoteSafeDriveGatewayContractTest]: routes by request path so the shared
  * [SafeDriveGatewayContractTest] methods work unmodified against a real HTTP round-trip (real JSON
- * serialization, real OkHttp/Retrofit call), not just a unit-level mapper test.
+ * serialization, real OkHttp/Retrofit call), not just a unit-level mapper test. The assistant query
+ * path is a real WebSocket upgrade + final frame, matching [RemoteSafeDriveGateway.queryAssistant]'s
+ * real transport (see `app/api/routes/assistant_ws.py`), not the old one-shot POST.
  */
 class FakeSafeDriveBackendDispatcher : Dispatcher() {
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.path.orEmpty().substringBefore('?')
+        if (path == "/api/v1/ws/assistant") {
+            return MockResponse().withWebSocketUpgrade(
+                object : WebSocketListener() {
+                    override fun onMessage(webSocket: WebSocket, text: String) {
+                        val requestId = Regex("\"requestId\":\"([^\"]+)\"").find(text)?.groupValues?.get(1) ?: "req_1"
+                        webSocket.send(assistantFinalFrame(requestId))
+                    }
+                },
+            )
+        }
         val body = when {
             path == "/health" -> HEALTH_JSON
             path == "/ready" -> READY_JSON
             path == "/api/v1/sessions/start" -> SESSION_JSON
             path == "/api/v1/state/update" -> STATE_ENVELOPE_JSON
             path == "/api/v1/state" -> STATE_ENVELOPE_JSON
-            path == "/api/v1/assistant/query" -> ASSISTANT_JSON
             path == "/api/v1/events" -> EVENT_ACCEPTED_JSON
             path == "/api/v1/actions/confirm" -> ACTION_CONFIRM_JSON
             path.startsWith("/api/v1/emergency/") -> EMERGENCY_JSON
@@ -26,6 +40,12 @@ class FakeSafeDriveBackendDispatcher : Dispatcher() {
         }
         return MockResponse().setResponseCode(200).setBody(body).setHeader("Content-Type", "application/json")
     }
+
+    private fun assistantFinalFrame(requestId: String) = """
+        {"type":"final","requestId":"$requestId","message":{"id":"msg_1","sender":"SAFEDRIVE",
+         "text":"Xin chào, tôi có thể giúp gì?","timestampMs":1000,"risk":null,"actions":[],
+         "route":"safety_fast_path","latencyMs":100},"serverTimeMs":1000}
+    """.trimIndent()
 
     companion object {
         const val HEALTH_JSON = """
@@ -58,11 +78,6 @@ class FakeSafeDriveBackendDispatcher : Dispatcher() {
               "stateVersion": 1,
               "acceptedAtMs": 1000
             }
-        """
-
-        const val ASSISTANT_JSON = """
-            {"requestId":"req_1","message":{"id":"msg_1","sender":"SAFEDRIVE","text":"Xin chào, tôi có thể giúp gì?",
-             "timestampMs":1000,"risk":null,"actions":[],"route":"safety_fast_path","latencyMs":100},"serverTimeMs":1000}
         """
 
         const val EVENT_ACCEPTED_JSON = """{"eventId":"evt_1","accepted":true,"acceptedAtMs":1000,"stateVersion":1}"""
