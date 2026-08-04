@@ -1,0 +1,35 @@
+[
+  {
+    "scenario": "engine_high_110C",
+    "risk_level": "HIGH",
+    "risk_title": "Nhiệt độ động cơ đang tăng cao",
+    "risk_available_before_llm_ms": 25.9,
+    "answer_route": "assistant.vehicle_status",
+    "answer_model": "deterministic-context-router",
+    "answer_llmUsed": false,
+    "answer_text": "Nhiệt độ động cơ đang tăng cao. Tốc độ hiện tại 85 km/h, cabin 25 độ C, động cơ 110 độ C. Bạn đã lái liên tục khoảng 20 phút.",
+    "answer_wall_ms": 2.2
+  },
+  {
+    "scenario": "engine_critical_116C",
+    "risk_level": "CRITICAL",
+    "risk_title": "Động cơ quá nhiệt nghiêm trọng",
+    "risk_available_before_llm_ms": 1.1,
+    "answer_route": "assistant.vehicle_status",
+    "answer_model": "deterministic-context-router",
+    "answer_llmUsed": false,
+    "answer_text": "Động cơ quá nhiệt nghiêm trọng. Tốc độ hiện tại 85 km/h, cabin 25 độ C, động cơ 116 độ C. Bạn đã lái liên tục khoảng 20 phút.",
+    "answer_wall_ms": 23.1
+  },
+  {
+    "scenario": "dtc_conflict_high",
+    "risk_level": "HIGH",
+    "risk_title": "Lỗi xe mức độ nghiêm trọng cao",
+    "risk_available_before_llm_ms": 15.8,
+    "answer_route": "vehicle.fault_concern",
+    "answer_model": "deterministic-context-router",
+    "answer_llmUsed": false,
+    "answer_text": "Xe đang có mã U0100: Controller communication fault, mức độ nghiêm trọng cao. Không nên tiếp tục hành trình dài. Hãy giảm tải cho xe, tránh tăng tốc mạnh và dừng tại vị trí an toàn để kiểm tra. Đây chưa phải chẩn đoán kỹ thuật cuối cùng.",
+    "answer_wall_ms": 12.8
+  }
+]

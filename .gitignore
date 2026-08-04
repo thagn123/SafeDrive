@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+
+# Android / Gradle
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Android App Build
+safedrive-ai (1)/android/app/build/
+safedrive-ai (1)/android/build/
+safedrive-ai (1)/android/.gradle/
+safedrive-ai (1)/android/local.properties
+
+# Logs
+*.log

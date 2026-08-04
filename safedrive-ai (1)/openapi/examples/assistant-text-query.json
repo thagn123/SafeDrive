@@ -1,0 +1,12 @@
+{
+  "sessionId": "sess_001",
+  "requestId": "req_001",
+  "text": "Xe đang có lỗi gì?",
+  "source": "TEXT",
+  "locale": "vi-VN",
+  "clientAttemptOf": null,
+  "context": {
+    "stateVersion": 123,
+    "screen": "cockpit"
+  }
+}

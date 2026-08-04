@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out clean source tree
+        uses: actions/checkout@v5
+
+      - name: Install pinned uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.32"
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Ruff check
+        run: uv run --locked --extra dev ruff check .
+
+      - name: Ruff format check
+        run: uv run --locked --extra dev ruff format --check .
+
+      - name: MyPy strict
+        run: uv run --locked --extra dev python -m mypy app tests create_fixtures.py
+
+      - name: Validate OpenAPI
+        run: uv run --locked --extra dev python -m openapi_spec_validator contracts/openapi.yaml
+
+      - name: Test fixtures and live HTTP contract
+        run: >-
+          uv run --locked --extra dev pytest
+          tests/test_openapi_fixtures.py
+          tests/test_openapi_live_contract.py
+          --junitxml=test-results/contract.xml
+
+      - name: Run full test suite
+        run: >-
+          uv run --locked --extra dev pytest
+          --junitxml=test-results/pytest.xml
+
+      - name: Check installed dependency compatibility
+        run: uv run --locked --extra dev uv pip check
+
+      - name: Build package
+        run: uv build
+
+      - name: Smoke test installed wheel outside source tree
+        run: |
+          uv venv .ci-wheel-venv
+          uv pip install --python .ci-wheel-venv/bin/python dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$GITHUB_WORKSPACE/.ci-wheel-venv/bin/python" -c "from app.core.config import Settings; from app.main import initialize_application_services; initialize_application_services(Settings(environment='test'))"
+
+      - name: Retain test and build artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safedrive-ci-artifacts
+          path: |
+            test-results/
+            dist/

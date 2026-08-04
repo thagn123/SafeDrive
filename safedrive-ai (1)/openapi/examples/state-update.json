@@ -1,0 +1,28 @@
+{
+  "sessionId": "sess_001",
+  "state": {
+    "speedKmh": 62.0,
+    "engineTemperatureC": 92.0,
+    "cabinTemperatureC": 25.0,
+    "energyPercent": 70,
+    "continuousDrivingMinutes": 135,
+    "steeringLastInteractionSeconds": 10,
+    "driverSeatOccupied": true,
+    "wearableConnected": false,
+    "activeDtcs": [],
+    "crashDetected": false,
+    "passengerResponse": "RESPONSIVE",
+    "updatedAtMs": 1780000000000
+  },
+  "driverSupportSignals": {
+    "steeringSignalAvailable": true,
+    "seatSensorAvailable": true,
+    "wearableLastUpdateMs": null,
+    "wearableHeartRateBpm": null,
+    "userReportedFatigue": false,
+    "availableSourceCount": 3,
+    "totalSourceCount": 4
+  },
+  "source": "PHONE_SIMULATOR",
+  "clientEventId": "state_0001"
+}

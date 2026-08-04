@@ -1,0 +1,9 @@
+{
+  "tool_call_id": "tool-123",
+  "status": "SUCCEEDED",
+  "output": {
+    "message": "SOS confirmed"
+  },
+  "executed_at": "2023-01-01T12:00:00Z",
+  "latency_ms": 150
+}

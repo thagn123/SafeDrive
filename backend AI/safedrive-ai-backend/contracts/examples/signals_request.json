@@ -1,0 +1,1 @@
+{"signals": [{"signal_id": "sig-001", "source": "VHAL", "signal_type": "vehicle.speed_kmh", "occurred_at": "2023-10-12T10:00:00Z", "value": {"value": 120.5}, "quality": "VALID", "vehicle_id": "veh-123", "trip_id": "trip-456"}]}

@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>SafeDrive AI — Báo cáo tiến độ</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root{
+    --navy:#1E2761;
+    --navy-2:#2C3A80;
+    --ice:#CADCFC;
+    --bg:#F5F7FB;
+    --card:#FFFFFF;
+    --text:#1E2761;
+    --muted:#5B6584;
+    --accent:#F96167;
+    --ok:#02C39A;
+    --amber:#C98A1A;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#dfe4ee;font-family:Calibri,Arial,sans-serif;color:var(--text);}
+  .slide{
+    width:1280px;height:720px;margin:28px auto;background:var(--card);
+    box-shadow:0 10px 30px rgba(20,25,60,0.18);
+    padding:64px 72px;position:relative;overflow:hidden;
+  }
+  .slide.dark{background:linear-gradient(150deg,var(--navy) 0%,var(--navy-2) 100%);color:#fff;}
+  .kicker{font-size:14px;letter-spacing:2px;text-transform:uppercase;color:var(--accent);font-weight:bold;margin-bottom:10px;}
+  .dark .kicker{color:var(--ice);}
+  h1{font-size:40px;margin:0 0 8px 0;font-weight:700;}
+  .slide.dark h1{font-size:56px;}
+  h2{font-size:30px;margin:0 0 24px 0;font-weight:700;color:var(--navy);}
+  p.sub{font-size:18px;color:var(--muted);margin:0 0 6px 0;}
+  .dark p.sub{color:var(--ice);font-size:20px;}
+  .foot{position:absolute;bottom:28px;left:72px;right:72px;font-size:11px;color:#9aa2bd;display:flex;justify-content:space-between;}
+  .cols{display:flex;gap:36px;height:100%;}
+  .col{flex:1;}
+  .card{background:var(--bg);border-radius:14px;padding:22px 24px;margin-bottom:16px;}
+  .card h3{margin:0 0 10px 0;font-size:19px;color:var(--navy);}
+  .card ul{margin:0;padding-left:20px;}
+  .card li{font-size:15px;line-height:1.55;margin-bottom:6px;color:#2b3358;}
+  .badge{display:inline-block;background:var(--navy);color:#fff;border-radius:20px;padding:4px 14px;font-size:12px;font-weight:bold;margin-bottom:14px;}
+  .badge.accent{background:var(--accent);}
+  .badge.ok{background:var(--ok);}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;}
+  .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:22px;}
+  .grid3x2{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);gap:20px;}
+  .feat{background:var(--bg);border-radius:14px;padding:20px;}
+  .feat .icon{width:42px;height:42px;border-radius:50%;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:12px;}
+  .feat h4{margin:0 0 6px 0;font-size:16px;color:var(--navy);}
+  .feat p{margin:0;font-size:13.5px;color:var(--muted);line-height:1.5;}
+  .arch{display:flex;align-items:center;justify-content:center;gap:18px;margin-top:36px;}
+  .box{background:var(--bg);border:2px solid var(--navy);border-radius:14px;padding:24px 22px;width:290px;text-align:center;}
+  .box h4{margin:0 0 8px 0;color:var(--navy);font-size:18px;}
+  .box p{margin:0;font-size:13px;color:var(--muted);line-height:1.5;}
+  .arrow{font-size:30px;color:var(--accent);font-weight:bold;}
+  .arrowlabel{font-size:11px;color:var(--muted);text-align:center;margin-top:4px;}
+  .web{margin:26px auto 0 auto;width:640px;border:2px dashed #b7bede;border-radius:14px;padding:16px 22px;text-align:center;background:#fbfcff;}
+  .web p{margin:2px 0;font-size:13px;color:var(--muted);}
+  .questions li{font-size:16.5px;line-height:1.6;margin-bottom:11px;color:#2b3358;}
+  .questions{padding-left:22px;}
+  .qnum{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:bold;margin-right:10px;}
+  .timeline{display:flex;justify-content:space-between;margin-top:50px;position:relative;}
+  .tstep{flex:1;text-align:center;padding:0 10px;position:relative;}
+  .tstep .dot{width:34px;height:34px;border-radius:50%;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:bold;margin:0 auto 14px auto;position:relative;z-index:2;}
+  .tstep .line{position:absolute;top:17px;left:-50%;width:100%;height:2px;background:var(--ice);z-index:1;}
+  .tstep:first-child .line{display:none;}
+  .tstep p{font-size:13px;color:#2b3358;line-height:1.5;margin:0;}
+  canvas{max-height:420px;}
+  .diagram{margin-top:4px;}
+  .diagram svg{width:100%;height:auto;display:block;}
+  .diagcap{text-align:center;font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.5;}
+  .diagcap .note{display:block;font-size:11px;font-style:italic;color:#8a92ac;margin-top:3px;}
+  .callout{background:#FFF3D6;border-radius:12px;padding:10px 20px;margin-bottom:10px;text-align:center;}
+  .callout p{margin:0;font-size:14px;color:#6b4b0a;font-weight:600;line-height:1.4;}
+  @media print{
+    body{background:#fff;}
+    .slide{box-shadow:none;margin:0;page-break-after:always;}
+  }
+</style>
+</head>
+<body>
+
+<!-- SLIDE 1: TITLE -->
+<div class="slide dark">
+  <div style="position:absolute;top:64px;left:72px;">
+    <div class="kicker">Báo cáo tiến độ dự án</div>
+    <h1>SafeDrive AI</h1>
+    <p class="sub">Ứng dụng AI hỗ trợ lái xe an toàn — Android MVP · Backend AI · HAUI</p>
+  </div>
+  <div style="position:absolute;bottom:64px;left:72px;">
+    <p class="sub" style="margin:0;">Thắng &nbsp;·&nbsp; Báo cáo mentor &nbsp;·&nbsp; 03/08/2026</p>
+  </div>
+  <div style="position:absolute;right:72px;bottom:64px;text-align:right;">
+    <p class="sub" style="margin:0;">Nguồn: khảo sát trực tiếp mã nguồn &amp; tài liệu kế hoạch trong repo</p>
+  </div>
+</div>
+
+<!-- SLIDE 2: MUC TIEU & PHAM VI -->
+<div class="slide">
+  <div class="kicker">01 — Phạm vi dự án</div>
+  <h2>Mục tiêu &amp; phạm vi MVP</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="badge ok">TRONG PHẠM VI</div>
+      <div class="card">
+        <ul>
+          <li>Cockpit: trạng thái xe, tốc độ, nhiệt độ, năng lượng, tóm tắt lỗi (DTC)</li>
+          <li>Assistant: chat văn bản + giọng nói, gợi ý nhanh, action card</li>
+          <li>Diagnostics: danh sách lỗi, mức độ nghiêm trọng, khuyến nghị</li>
+          <li>Simulator (Developer Mode): preset + nhập telemetry thủ công</li>
+          <li>Emergency: mô phỏng quy trình khẩn cấp (SOS) có kiểm soát</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col">
+      <div class="badge accent">CHỦ ĐÍCH KHÔNG LÀM</div>
+      <div class="card">
+        <ul>
+          <li>Không dùng camera / DMS, không suy diễn buồn ngủ hay mất tập trung của tài xế</li>
+          <li>SOS luôn ở chế độ mô phỏng — không dispatch cứu hộ thật</li>
+          <li>Ngoài phạm vi: Gemini Live, Firebase, Google Maps, VHAL thật, cloud deployment, Android Automotive production</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>2 / 13</span></div>
+</div>
+
+<!-- SLIDE 3: KIEN TRUC -->
+<div class="slide">
+  <div class="kicker">02 — Kiến trúc</div>
+  <h2>Kiến trúc hệ thống</h2>
+  <div class="arch">
+    <div class="box">
+      <h4>Android App</h4>
+      <p>Kotlin · Jetpack Compose<br>MVVM + Use Case + Repository</p>
+    </div>
+    <div style="text-align:center;">
+      <div class="arrow">⇄</div>
+      <div class="arrowlabel">Gateway: Mock ↔ Remote<br>(đổi qua BASE_URL)</div>
+    </div>
+    <div class="box">
+      <h4>Backend AI</h4>
+      <p>FastAPI (Python 3.11)<br>Ollama · Qwen2.5-7B cục bộ</p>
+    </div>
+  </div>
+  <div class="web">
+    <p><b>Web Prototype (React + Vite + Tailwind)</b></p>
+    <p>Dùng để thiết kế tham khảo UI/luồng — không phát triển tiếp</p>
+  </div>
+  <p style="text-align:center;margin-top:26px;font-size:13px;color:var(--muted);">
+    OpenAPI contract <b>đã đóng băng</b> (9 endpoint) — ranh giới bàn giao Android ↔ Backend đã rõ ràng
+  </p>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>3 / 13</span></div>
+</div>
+
+<!-- SLIDE 4: TECH STACK -->
+<div class="slide">
+  <div class="kicker">03 — Công nghệ</div>
+  <h2>Tech stack theo từng tầng</h2>
+  <div class="grid3">
+    <div class="card">
+      <h3>📱 Android (chính)</h3>
+      <ul>
+        <li>Kotlin, Jetpack Compose, Material 3</li>
+        <li>Coroutines + StateFlow</li>
+        <li>Retrofit / OkHttp, DataStore</li>
+        <li>AGP 9.3 · Gradle 9.5 · JDK 17</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🧠 Backend AI</h3>
+      <ul>
+        <li>Python 3.11, FastAPI, Pydantic v2</li>
+        <li>Uvicorn, quản lý gói bằng <code>uv</code></li>
+        <li>LLM cục bộ qua Ollama (Qwen2.5-7B)</li>
+        <li>LLM chỉ hỗ trợ nội dung — an toàn là logic deterministic</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🖥️ Web Prototype</h3>
+      <ul>
+        <li>React 19, TypeScript 5.8</li>
+        <li>Vite 6, Tailwind 4</li>
+        <li>Chỉ dùng tham khảo UI/flow</li>
+      </ul>
+    </div>
+  </div>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>4 / 13</span></div>
+</div>
+
+<!-- SLIDE 5: TINH NANG -->
+<div class="slide">
+  <div class="kicker">04 — Tính năng</div>
+  <h2>Tính năng đã hoàn thiện trong code</h2>
+  <div class="grid3x2">
+    <div class="feat"><div class="icon">🚗</div><h4>Cockpit</h4><p>Status hero, tốc độ, nhiệt độ, năng lượng, tóm tắt tín hiệu &amp; DTC</p></div>
+    <div class="feat"><div class="icon">💬</div><h4>Assistant</h4><p>Chat văn bản, quick suggestions, action card, xử lý lỗi/timeout/retry</p></div>
+    <div class="feat"><div class="icon">🛠️</div><h4>Diagnostics</h4><p>Danh sách DTC, severity, khuyến nghị, hỏi trực tiếp trợ lý</p></div>
+    <div class="feat"><div class="icon">🎛️</div><h4>Simulator</h4><p>Preset kịch bản + nhập telemetry thủ công (Developer Mode)</p></div>
+    <div class="feat"><div class="icon">🎙️</div><h4>Voice</h4><p>7 trạng thái (idle → wake word → listening → speaking...), STT + TTS hợp nhất</p></div>
+    <div class="feat"><div class="icon">🆘</div><h4>Emergency</h4><p>State machine 5s → 15s → 10s, chặn Back, idempotent, chỉ mô phỏng</p></div>
+  </div>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>5 / 13</span></div>
+</div>
+
+<!-- SLIDE 6: SO DO VOICE -->
+<div class="slide">
+  <div class="kicker">05 — Sơ đồ thuật toán</div>
+  <h2>Voice Assistant — sơ đồ trạng thái</h2>
+  <div class="diagram">
+    <svg viewBox="0 0 1180 370" xmlns="http://www.w3.org/2000/svg" role="img">
+      <title>Sơ đồ trạng thái Voice Assistant</title>
+      <desc>DISABLED và IDLE hai chiều; IDLE sang WAKE_WORD_DETECTED, LISTENING, PROCESSING, SPEAKING rồi quay lại IDLE; LISTENING và PROCESSING có thể chuyển sang ERROR rồi về IDLE.</desc>
+      <defs>
+        <marker id="vArrowNavy" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#1E2761"/></marker>
+        <marker id="vArrowCoral" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#F96167"/></marker>
+        <marker id="vArrowMuted" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#9aa2bd"/></marker>
+      </defs>
+
+      <rect x="40" y="110" width="168" height="64" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="124" y="147" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">DISABLED</text>
+
+      <rect x="226" y="110" width="168" height="64" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="310" y="147" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">IDLE</text>
+
+      <rect x="412" y="110" width="168" height="64" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="496" y="140" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1E2761">WAKE_WORD</text>
+      <text x="496" y="155" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1E2761">_DETECTED</text>
+
+      <rect x="598" y="110" width="168" height="64" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="682" y="147" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">LISTENING</text>
+
+      <rect x="784" y="110" width="168" height="64" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="868" y="147" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">PROCESSING</text>
+
+      <rect x="970" y="110" width="168" height="64" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="1054" y="147" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">SPEAKING</text>
+
+      <line x1="208" y1="136" x2="224" y2="136" stroke="#1E2761" stroke-width="2" marker-end="url(#vArrowNavy)"/>
+      <line x1="224" y1="148" x2="208" y2="148" stroke="#1E2761" stroke-width="2" marker-end="url(#vArrowNavy)"/>
+      <line x1="394" y1="142" x2="410" y2="142" stroke="#1E2761" stroke-width="2" marker-end="url(#vArrowNavy)"/>
+      <line x1="580" y1="142" x2="596" y2="142" stroke="#1E2761" stroke-width="2" marker-end="url(#vArrowNavy)"/>
+      <line x1="766" y1="142" x2="782" y2="142" stroke="#1E2761" stroke-width="2" marker-end="url(#vArrowNavy)"/>
+      <line x1="952" y1="142" x2="968" y2="142" stroke="#1E2761" stroke-width="2" marker-end="url(#vArrowNavy)"/>
+
+      <path d="M 1054 108 C 1054 28, 310 28, 310 108" fill="none" stroke="#1E2761" stroke-width="2" marker-end="url(#vArrowNavy)"/>
+      <text x="682" y="24" text-anchor="middle" font-size="12" fill="#5B6584">hoàn tất → IDLE</text>
+
+      <rect x="691" y="264" width="168" height="60" rx="10" fill="#FDEDEE" stroke="#F96167" stroke-width="2"/>
+      <text x="775" y="299" text-anchor="middle" font-size="13" font-weight="700" fill="#B3313A">ERROR</text>
+
+      <line x1="700" y1="176" x2="748" y2="262" stroke="#F96167" stroke-width="2" marker-end="url(#vArrowCoral)"/>
+      <line x1="850" y1="176" x2="802" y2="262" stroke="#F96167" stroke-width="2" marker-end="url(#vArrowCoral)"/>
+
+      <path d="M 691 296 C 480 322, 310 258, 310 176" fill="none" stroke="#9aa2bd" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#vArrowMuted)"/>
+    </svg>
+  </div>
+  <p class="diagcap">Mọi trạng thái đang hoạt động đều có thể <b>cancel → IDLE hoặc DISABLED</b>. Mỗi phiên có <code>sessionId</code>/generation để response cũ không ghi đè phiên voice mới.</p>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>6 / 13</span></div>
+</div>
+
+<!-- SLIDE 7: SO DO EMERGENCY -->
+<div class="slide">
+  <div class="kicker">06 — Sơ đồ thuật toán</div>
+  <h2>Emergency (SOS) — sơ đồ thuật toán an toàn</h2>
+  <div class="diagram">
+    <svg viewBox="0 0 1180 545" xmlns="http://www.w3.org/2000/svg" role="img">
+      <title>Sơ đồ thuật toán Emergency</title>
+      <desc>IDLE chuyển sang CANDIDATE_DETECTED, VERIFYING_EVIDENCE 5 giây, AWAITING_USER_RESPONSE 15 giây, FINAL_COUNTDOWN 10 giây rồi SOS_SIMULATED_SENT; ba bước giữa có thể chuyển sang CANCELLED khi evidence không hợp lệ hoặc người dùng xác nhận an toàn.</desc>
+      <defs>
+        <marker id="eArrowNavy" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#1E2761"/></marker>
+        <marker id="eArrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#02C39A"/></marker>
+        <marker id="eArrowMuted" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#9aa2bd"/></marker>
+      </defs>
+
+      <rect x="60" y="10" width="320" height="60" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="220" y="46" text-anchor="middle" font-size="14" font-weight="700" fill="#1E2761">IDLE</text>
+
+      <rect x="60" y="102" width="320" height="60" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="220" y="138" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">CANDIDATE_DETECTED</text>
+
+      <rect x="60" y="194" width="320" height="60" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="220" y="220" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">VERIFYING_EVIDENCE</text>
+      <text x="220" y="238" text-anchor="middle" font-size="11.5" fill="#5B6584">deadline 5s</text>
+
+      <rect x="60" y="286" width="320" height="60" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="220" y="312" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">AWAITING_USER_RESPONSE</text>
+      <text x="220" y="330" text-anchor="middle" font-size="11.5" fill="#5B6584">deadline 15s</text>
+
+      <rect x="60" y="378" width="320" height="60" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="220" y="404" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">FINAL_COUNTDOWN</text>
+      <text x="220" y="422" text-anchor="middle" font-size="11.5" fill="#5B6584">deadline 10s</text>
+
+      <rect x="60" y="470" width="320" height="60" rx="10" fill="#F96167" stroke="none"/>
+      <text x="220" y="496" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">SOS_SIMULATED_SENT</text>
+      <text x="220" y="513" text-anchor="middle" font-size="10.5" fill="#FFE8E9">ghi đúng 1 lần · không dispatch thật</text>
+
+      <line x1="220" y1="70" x2="220" y2="100" stroke="#1E2761" stroke-width="2" marker-end="url(#eArrowNavy)"/>
+      <line x1="220" y1="162" x2="220" y2="192" stroke="#1E2761" stroke-width="2" marker-end="url(#eArrowNavy)"/>
+      <line x1="220" y1="254" x2="220" y2="284" stroke="#1E2761" stroke-width="2" marker-end="url(#eArrowNavy)"/>
+      <line x1="220" y1="346" x2="220" y2="376" stroke="#1E2761" stroke-width="2" marker-end="url(#eArrowNavy)"/>
+      <line x1="220" y1="438" x2="220" y2="468" stroke="#1E2761" stroke-width="2" marker-end="url(#eArrowNavy)"/>
+
+      <rect x="800" y="286" width="300" height="60" rx="10" fill="#E9F9F5" stroke="#02C39A" stroke-width="2.5"/>
+      <text x="950" y="322" text-anchor="middle" font-size="14" font-weight="700" fill="#02895F">CANCELLED</text>
+
+      <line x1="380" y1="224" x2="798" y2="300" stroke="#02C39A" stroke-width="2" marker-end="url(#eArrowGreen)"/>
+      <text x="570" y="252" text-anchor="middle" font-size="11" fill="#02895F">evidence invalid / user OK</text>
+
+      <line x1="380" y1="316" x2="798" y2="316" stroke="#02C39A" stroke-width="2" marker-end="url(#eArrowGreen)"/>
+      <text x="570" y="308" text-anchor="middle" font-size="11" fill="#02895F">USER_OK</text>
+
+      <line x1="380" y1="408" x2="798" y2="332" stroke="#02C39A" stroke-width="2" marker-end="url(#eArrowGreen)"/>
+      <text x="570" y="392" text-anchor="middle" font-size="11" fill="#02895F">cancel</text>
+
+      <path d="M 1000 284 C 1080 150, 700 20, 382 34" fill="none" stroke="#9aa2bd" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#eArrowMuted)"/>
+      <text x="800" y="86" text-anchor="middle" font-size="11" fill="#5B6584">acknowledge</text>
+    </svg>
+  </div>
+  <p class="diagcap"><span style="color:#02895F;">●</span> Huỷ an toàn &nbsp;&nbsp; <span style="color:#F96167;">●</span> SOS đã mô phỏng gửi &nbsp;&nbsp;|&nbsp;&nbsp; Fail-safe cốt lõi: lỗi mạng/persistence <b>không bao giờ</b> tự suy ra SOS_SIMULATED_SENT. <code>realEmergencyDispatchEnabled</code> luôn <code>false</code> trong MVP.</p>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>7 / 13</span></div>
+</div>
+
+<!-- SLIDE 8: SO DO XU LY CAU HOI -->
+<div class="slide">
+  <div class="kicker">07 — Sơ đồ thuật toán</div>
+  <h2>Luồng xử lý một câu hỏi</h2>
+  <div class="callout">
+    <p>🔑 Router luôn quyết định trước bằng code cố định — LLM chỉ được gọi cho phần diễn đạt/mơ hồ, không bao giờ cho HVAC, DTC hay SOS.</p>
+  </div>
+  <div class="diagram">
+    <svg viewBox="0 0 1180 450" xmlns="http://www.w3.org/2000/svg" role="img">
+      <title>Luồng xử lý một câu hỏi</title>
+      <desc>Android App gửi câu hỏi qua REST/WebSocket tới Intent Router rồi Context và Safety Engine; nếu là HVAC, DTC, mệt mỏi hoặc SOS thì trả lời mẫu đã kiểm chứng; nếu là câu mơ hồ hoặc trò chuyện thì gọi Ollama LLM cục bộ; cả hai nhánh đều qua Guardrail trước khi phản hồi về Android.</desc>
+      <defs>
+        <marker id="qArrowNavy" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#1E2761"/></marker>
+        <marker id="qArrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#02C39A"/></marker>
+        <marker id="qArrowAmber" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#C98A1A"/></marker>
+      </defs>
+
+      <rect x="440" y="6" width="300" height="44" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="590" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="#1E2761">Android App</text>
+      <text x="590" y="39" text-anchor="middle" font-size="10.5" fill="#5B6584">Cockpit · Trợ lý · Mô phỏng</text>
+
+      <line x1="590" y1="50" x2="350" y2="72" stroke="#1E2761" stroke-width="2" marker-end="url(#qArrowNavy)"/>
+      <text x="530" y="63" text-anchor="middle" font-size="10" fill="#5B6584">REST + WebSocket /api/v1</text>
+
+      <rect x="210" y="76" width="280" height="46" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="350" y="95" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1E2761">Intent Router</text>
+      <text x="350" y="110" text-anchor="middle" font-size="10.5" fill="#5B6584">khớp từ khóa (code)</text>
+
+      <line x1="490" y1="99" x2="688" y2="99" stroke="#1E2761" stroke-width="2" marker-end="url(#qArrowNavy)"/>
+
+      <rect x="690" y="76" width="280" height="46" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="830" y="95" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1E2761">Context + Safety Engine</text>
+      <text x="830" y="110" text-anchor="middle" font-size="10.5" fill="#5B6584">deterministic</text>
+
+      <line x1="830" y1="122" x2="605" y2="150" stroke="#1E2761" stroke-width="2" marker-end="url(#qArrowNavy)"/>
+
+      <polygon points="590,148 720,190 590,232 460,190" fill="#FFFFFF" stroke="#1E2761" stroke-width="2" stroke-dasharray="5,3"/>
+      <text x="590" y="185" text-anchor="middle" font-size="11" font-weight="700" fill="#1E2761">Cần LLM hỗ trợ</text>
+      <text x="590" y="200" text-anchor="middle" font-size="11" font-weight="700" fill="#1E2761">diễn đạt?</text>
+
+      <line x1="460" y1="190" x2="270" y2="258" stroke="#02C39A" stroke-width="2" marker-end="url(#qArrowGreen)"/>
+      <text x="330" y="224" text-anchor="middle" font-size="10.5" fill="#02895F">Không — HVAC · DTC ·</text>
+      <text x="330" y="238" text-anchor="middle" font-size="10.5" fill="#02895F">mệt mỏi · SOS</text>
+
+      <line x1="720" y1="190" x2="910" y2="258" stroke="#C98A1A" stroke-width="2" marker-end="url(#qArrowAmber)"/>
+      <text x="855" y="224" text-anchor="middle" font-size="10.5" fill="#8a5f0e">Có — câu mơ hồ /</text>
+      <text x="855" y="238" text-anchor="middle" font-size="10.5" fill="#8a5f0e">trò chuyện</text>
+
+      <rect x="110" y="260" width="300" height="50" rx="10" fill="#E9F9F5" stroke="#02C39A" stroke-width="2.5"/>
+      <text x="260" y="280" text-anchor="middle" font-size="12.5" font-weight="700" fill="#02895F">Trả lời mẫu</text>
+      <text x="260" y="296" text-anchor="middle" font-size="10.5" fill="#02895F">đã kiểm chứng an toàn</text>
+
+      <rect x="770" y="260" width="300" height="50" rx="10" fill="#FFF3D6" stroke="#C98A1A" stroke-width="2.5"/>
+      <text x="920" y="280" text-anchor="middle" font-size="12.5" font-weight="700" fill="#8a5f0e">🧠 Ollama LLM (local)</text>
+      <text x="920" y="296" text-anchor="middle" font-size="10.5" fill="#8a5f0e">phân loại + viết lại câu</text>
+
+      <line x1="360" y1="310" x2="500" y2="330" stroke="#9aa2bd" stroke-width="2" marker-end="url(#qArrowNavy)"/>
+      <line x1="820" y1="310" x2="680" y2="330" stroke="#9aa2bd" stroke-width="2" marker-end="url(#qArrowNavy)"/>
+
+      <rect x="440" y="330" width="300" height="42" rx="10" fill="#F5F7FB" stroke="#1E2761" stroke-width="2"/>
+      <text x="590" y="348" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1E2761">Guardrail</text>
+      <text x="590" y="362" text-anchor="middle" font-size="10.5" fill="#5B6584">kiểm tra giới hạn</text>
+
+      <line x1="590" y1="372" x2="590" y2="388" stroke="#1E2761" stroke-width="2" marker-end="url(#qArrowNavy)"/>
+
+      <rect x="410" y="390" width="360" height="42" rx="10" fill="#1E2761" stroke="none"/>
+      <text x="590" y="415" text-anchor="middle" font-size="12.5" font-weight="700" fill="#FFFFFF">Phản hồi trả về Android App</text>
+    </svg>
+  </div>
+  <p class="diagcap">🟢 Trả lời mẫu — code cố định, đã kiểm chứng &nbsp;·&nbsp; 🟡 LLM chỉ hỗ trợ diễn đạt, không quyết định an toàn
+    <span class="note">* Thiết kế theo tài liệu backend (scope.md/master plan). Hiện tại: REST slice tín hiệu/state đã DONE; Intent Router, Context Engine, Guardrail, Chat orchestration, WebSocket đều NOT_STARTED theo task matrix.</span>
+  </p>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>8 / 13</span></div>
+</div>
+
+<!-- SLIDE 9: TEST & CHAT LUONG -->
+<div class="slide">
+  <div class="kicker">08 — Chất lượng</div>
+  <h2>Kiểm thử &amp; CI</h2>
+  <div class="cols">
+    <div class="col">
+      <canvas id="testChart"></canvas>
+    </div>
+    <div class="col">
+      <div class="card">
+        <h3>Android</h3>
+        <ul>
+          <li>275 unit test — pass, 0 lỗi</li>
+          <li>29 Compose UI test đã viết, <b>chưa chạy trên thiết bị/emulator thật</b></li>
+          <li>Chưa có CI</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Backend AI</h3>
+        <ul>
+          <li>Slice tín hiệu/state: 130 test pass (canonicalizer, idempotency, rolling window, contract)</li>
+          <li>Có CI (<code>ci.yml</code>): ruff, mypy strict, validate OpenAPI, pytest mỗi push/PR</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>9 / 13</span></div>
+</div>
+
+<!-- SLIDE 10: TIEN DO -->
+<div class="slide">
+  <div class="kicker">09 — Tiến độ</div>
+  <h2>Tiến độ theo module (task matrix)</h2>
+  <canvas id="progressChart" style="max-height:480px;"></canvas>
+  <p style="text-align:center;font-size:12px;color:var(--muted);margin-top:8px;">* Backend theo Task Status Matrix chính thức (52 task); còn lại là ước lượng sơ bộ theo khối lượng code</p>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>10 / 13</span></div>
+</div>
+
+<!-- SLIDE 11: SELLING POINTS -->
+<div class="slide">
+  <div class="kicker">10 — Điểm nổi bật</div>
+  <h2>Điểm mạnh khi thuyết trình</h2>
+  <div class="grid3x2">
+    <div class="feat"><div class="icon">📚</div><h4>Tài liệu kế hoạch 00→13</h4><p>Kiến trúc, đặc tả từng màn hình, checklist test/security — hiếm gặp ở đồ án sinh viên</p></div>
+    <div class="feat"><div class="icon">✅</div><h4>275 unit test pass</h4><p>Kiến trúc Clean/MVVM rõ ràng, tách domain/data/presentation</p></div>
+    <div class="feat"><div class="icon">🔗</div><h4>OpenAPI contract đóng băng</h4><p>9 endpoint, đổi Mock/Remote không cần sửa UI</p></div>
+    <div class="feat"><div class="icon">🛡️</div><h4>An toàn theo thiết kế</h4><p>Không camera/DMS, không suy diễn tài xế, SOS luôn mô phỏng</p></div>
+    <div class="feat"><div class="icon">🔒</div><h4>Voice an toàn ngôn ngữ</h4><p>Chuẩn hóa &amp; allowlist tiếng Việt, tránh cancel nhầm "tôi không ổn"</p></div>
+    <div class="feat"><div class="icon">🔁</div><h4>Fail-safe &amp; khôi phục trạng thái</h4><p>Deadline tuyệt đối persistent, sống sót qua rotation/mất mạng; không bao giờ tự suy ra SOS</p></div>
+  </div>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>11 / 13</span></div>
+</div>
+
+<!-- SLIDE 12: CAU HOI CHO MENTOR -->
+<div class="slide">
+  <div class="kicker" style="color:var(--accent);">11 — Cần trao đổi tối nay</div>
+  <h2>Vấn đề cần hỏi mentor</h2>
+  <ol class="questions">
+    <li><span class="qnum">1</span>Chưa rõ quy trình <b>triển khai lên platform</b> (deploy) và cách <b>nộp bài</b> — cần mentor hướng dẫn cụ thể các bước.</li>
+    <li><span class="qnum">2</span>Cần <b>call nhanh với team</b> để nắm status hiện tại từng phần, tránh lệch thông tin trước buổi báo cáo chính thức.</li>
+    <li><span class="qnum">3</span><b>QA trên thiết bị thật</b> đang "pending" — 29 Compose UI test đã viết nhưng chưa chạy trên device/emulator thật.</li>
+    <li><span class="qnum">4</span><b>Remote Mode</b> (Android nối Backend AI thật) chưa từng được test nối thực tế — mới chỉ qua MockWebServer giả lập.</li>
+    <li><span class="qnum">5</span>Theo task matrix, <b>Intent Router/Context Engine/Guardrail/Chat orchestration/WebSocket</b> trên backend đều đang NOT_STARTED — chỉ xong slice tín hiệu/state. Cần ưu tiên phần nào trước hạn nộp bài?</li>
+    <li><span class="qnum">6</span>Nhờ mentor góp ý thêm <b>selling point</b> phù hợp để chọn lọc khi thuyết trình chính thức.</li>
+  </ol>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>12 / 13</span></div>
+</div>
+
+<!-- SLIDE 13: NEXT STEPS -->
+<div class="slide">
+  <div class="kicker">12 — Kế hoạch tiếp theo</div>
+  <h2>Next steps</h2>
+  <div class="timeline">
+    <div class="tstep"><div class="line"></div><div class="dot">1</div><p>Device QA trên điện thoại thật</p></div>
+    <div class="tstep"><div class="line"></div><div class="dot">2</div><p>Test tích hợp Remote Mode Android ↔ Backend</p></div>
+    <div class="tstep"><div class="line"></div><div class="dot">3</div><p>Làm rõ quy trình deploy / nộp bài với mentor</p></div>
+    <div class="tstep"><div class="line"></div><div class="dot">4</div><p>Chuẩn bị demo script + video</p></div>
+    <div class="tstep"><div class="line"></div><div class="dot">5</div><p>Hoàn thiện selling points cho báo cáo chính thức</p></div>
+  </div>
+  <div class="foot"><span>SafeDrive AI · Báo cáo tiến độ</span><span>13 / 13</span></div>
+</div>
+
+<script>
+Chart.defaults.font.family = "Calibri, Arial, sans-serif";
+new Chart(document.getElementById('testChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Android\nunit test', 'Android\nCompose UI test', 'Backend\n(REST slice)'],
+    datasets: [{
+      data: [275, 29, 130],
+      backgroundColor: ['#1E2761', '#CADCFC', '#02C39A'],
+      borderRadius: 6
+    }]
+  },
+  options: {
+    plugins: { legend: { display:false }, title: { display:true, text:'Số lượng test', font:{size:16} } },
+    scales: { y: { beginAtZero:true, grid:{color:'#eef1f8'} }, x:{ grid:{display:false} } }
+  }
+});
+new Chart(document.getElementById('progressChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Android MVP (core)', 'Backend — tín hiệu/state (REST)', 'Backend — chat/risk/guardrail/SOS', 'Remote Mode nối thật', 'Device QA thật', 'Chuẩn bị deploy/nộp bài'],
+    datasets: [{
+      data: [90, 90, 10, 0, 0, 0],
+      backgroundColor: ['#1E2761','#3E5C9A','#C98A1A','#CADCFC','#CADCFC','#F96167'],
+      borderRadius: 6
+    }]
+  },
+  options: {
+    indexAxis: 'y',
+    plugins: { legend:{display:false}, title:{display:true, text:'% ước tính hoàn thành', font:{size:16}} },
+    scales: { x:{ beginAtZero:true, max:100, grid:{color:'#eef1f8'} }, y:{ grid:{display:false}, ticks:{font:{size:11}} } }
+  }
+});
+</script>
+</body>
+</html>

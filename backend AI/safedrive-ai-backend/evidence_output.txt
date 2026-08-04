@@ -1,0 +1,10 @@
+=== REAL OLLAMA NARRATION EVIDENCE ===
+HTTP status: 200
+model field: ollama/qwen2.5:7b-instruct-q4_K_M
+llmUsed: True
+fallback: False
+fallbackReason: None
+serverProcessingMs: 12054
+wall_clock_ms: 12070.2
+route: companion.conversation
+text: Xe đang chạy 72 km/h, cabin 25 độ C. Bạn đã lái khoảng 20 phút rồi. Nếu bạn bắt đầu mệt, hãy nói với tôi hoặc dừng ở vị trí an toàn khi có thể.

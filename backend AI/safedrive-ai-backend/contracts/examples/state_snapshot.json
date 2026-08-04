@@ -1,0 +1,24 @@
+{
+  "request_id": "req_01",
+  "timestamp": "2026-07-29T10:00:00Z",
+  "schema_version": "1.0",
+  "vehicle_id": "v1",
+  "trip_id": "t1",
+  "state_version": 1,
+  "components": {
+    "vehicle.speed_kmh": {
+      "signal_type": "vehicle.speed_kmh",
+      "value": {
+        "value": 100.5
+      },
+      "updated_at": "2026-07-29T09:59:59Z",
+      "sequence": 1,
+      "source": "VHAL",
+      "freshness": {
+        "age_ms": 100,
+        "status": "FRESH",
+        "source": "VHAL"
+      }
+    }
+  }
+}

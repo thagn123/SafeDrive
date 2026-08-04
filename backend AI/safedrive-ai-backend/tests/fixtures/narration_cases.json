@@ -1,0 +1,168 @@
+{
+  "_readme": "Evaluated by tests/test_narration_cases.py against ContextAwareAssistant's deterministic templates (the routes here are never LLM-narrated, see _NARRATABLE_ROUTES in app/mobile/session_store.py, so this IS the final user-facing text). Checked by concept/keyword presence, not exact string match. Cases with skip_reason are documented here for coverage but exercised by a dedicated test elsewhere (they need live HTTP mocking of the Ollama call, which this fixture format does not model).",
+  "cases": [
+    {
+      "id": "normal_state_low_risk",
+      "input": {"text": "Tinh trang xe the nao", "cabin_temperature": 24.0, "driving_minutes": 30, "fatigue": false},
+      "must_include_concepts": ["vận hành bình thường"],
+      "must_not_include": ["user_reported_fatigue", "driving_over_4_hours", "hot_cabin"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "cabin_discomfort_medium_risk",
+      "input": {"text": "Tinh trang xe the nao", "cabin_temperature": 33.0, "driving_minutes": 30, "fatigue": false},
+      "must_include_concepts": ["Cabin đang nóng"],
+      "must_not_include": ["user_reported_fatigue", "vận hành bình thường"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "cabin_too_hot_direct_comfort_request",
+      "input": {"text": "Trong xe nong qua", "cabin_temperature": 33.0, "driving_minutes": 30, "fatigue": false},
+      "must_include_concepts": ["Cabin hiện ở", "đề xuất đặt HVAC"],
+      "must_not_include": ["user_reported_fatigue"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "prolonged_driving_user_reported_fatigue",
+      "input": {"text": "Toi hoi buon ngu", "driving_minutes": 245, "fatigue": true, "cabin_temperature": 24.0},
+      "must_include_concepts": ["Bạn báo đang mệt", "245", "dừng ở vị trí an toàn"],
+      "must_not_include": ["user_reported_fatigue", "driving_over_4_hours"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "prolonged_driving_no_explicit_fatigue_report",
+      "input": {"text": "Toi khong on, co nen dung khong", "driving_minutes": 245, "fatigue": false, "cabin_temperature": 24.0},
+      "must_include_concepts": ["245", "dừng ở vị trí an toàn"],
+      "must_not_include": ["user_reported_fatigue", "driving_over_4_hours"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "fatigue_without_driving_duration_signal",
+      "input": {"text": "Toi hoi buon ngu", "driving_minutes": null, "fatigue": true, "cabin_temperature": 24.0},
+      "must_include_concepts": ["Bạn báo đang mệt"],
+      "must_not_include": ["None", "phút"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "known_dtc_critical",
+      "input": {"text": "Bao loi gi vay", "dtc_severity": "CRITICAL"},
+      "must_include_concepts": ["U0100", "Không nên tiếp tục hành trình dài", "chưa phải chẩn đoán kỹ thuật cuối cùng"],
+      "must_not_include": ["Ban co the tiep tuc lai xe binh thuong"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "known_dtc_high",
+      "input": {"text": "Bao loi gi vay", "dtc_severity": "HIGH"},
+      "must_include_concepts": ["U0100", "Không nên tiếp tục hành trình dài", "chưa phải chẩn đoán kỹ thuật cuối cùng"],
+      "must_not_include": ["Ban co the tiep tuc lai xe binh thuong"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "known_dtc_medium_allows_cautious_continuation",
+      "input": {"text": "Bao loi gi vay", "dtc_severity": "MEDIUM"},
+      "must_include_concepts": ["thận trọng"],
+      "must_not_include": ["Không nên tiếp tục hành trình dài", "Ban co the tiep tuc lai xe binh thuong"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "known_dtc_low_no_unnecessary_alarm",
+      "input": {"text": "Bao loi gi vay", "dtc_severity": "LOW"},
+      "must_include_concepts": ["kiểm tra"],
+      "must_not_include": ["Không nên tiếp tục hành trình dài", "nghiêm trọng cao", "Ban co the tiep tuc lai xe binh thuong"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "unknown_dtc_no_active_fault",
+      "input": {"text": "Xe co bao loi gi khong", "dtc_severity": null},
+      "must_include_concepts": ["chưa thấy mã lỗi hoạt động"],
+      "must_not_include": ["U0100", "nghiêm trọng"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "conflicting_client_recommendation_is_overridden",
+      "input": {"text": "Xe co van de gi khong", "dtc_severity": "HIGH"},
+      "must_include_concepts": ["Không nên tiếp tục hành trình dài"],
+      "must_not_include": ["Ban co the tiep tuc lai xe binh thuong"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "missing_driving_duration_field_on_status_query",
+      "input": {"text": "Tinh trang xe the nao", "driving_minutes": null, "cabin_temperature": 24.0},
+      "must_include_concepts": ["vận hành bình thường"],
+      "must_not_include": ["None phút"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "stale_state_refuses_a_confident_answer",
+      "input": {"text": "Tinh trang xe the nao", "stale_by_ms": 1},
+      "must_include_concepts": ["cập nhật"],
+      "must_not_include": ["km/h", "vận hành bình thường"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "high_risk_never_delayed_or_narrated",
+      "input": {"text": "Xe co van de gi khong", "dtc_severity": "HIGH"},
+      "must_include_concepts": ["U0100"],
+      "must_not_include": [],
+      "expected_tone": "direct",
+      "expected_fallback": false,
+      "note": "HIGH risk routes are excluded from _NARRATABLE_ROUTES entirely -- this case documents that the 'direct' tone mapping exists in llm.py's _TONE_BY_RISK for defensiveness, even though this specific route never reaches the narrator today."
+    },
+    {
+      "id": "ollama_provider_timeout_on_companion_chat",
+      "input": {"text": "Noi chuyen voi toi mot chut"},
+      "must_include_concepts": ["Tôi ở đây cùng bạn"],
+      "must_not_include": [],
+      "expected_tone": "calm",
+      "expected_fallback": true,
+      "skip_reason": "covered by tests/test_mobile_compatibility.py::test_narratable_route_falls_back_to_the_deterministic_reply_when_ollama_times_out (requires HTTP-level Ollama mocking, not expressible via this fixture's plan_reply harness)"
+    },
+    {
+      "id": "ollama_invalid_json_on_companion_chat",
+      "input": {"text": "Noi chuyen voi toi mot chut"},
+      "must_include_concepts": ["Tôi ở đây cùng bạn"],
+      "must_not_include": [],
+      "expected_tone": "calm",
+      "expected_fallback": true,
+      "skip_reason": "covered by unit tests in tests/test_mobile_llm.py (test_ollama_narrator_rejects_non_vietnamese_output and friends) that exercise rewrite_grounded_reply's rejection paths directly"
+    },
+    {
+      "id": "companion_chat_is_narratable_and_grounded",
+      "input": {"text": "Noi chuyen voi toi mot chut", "speed_kmh": 72.0, "cabin_temperature": 25.0, "driving_minutes": 20},
+      "must_include_concepts": ["Tôi ở đây cùng bạn", "72 km/h", "25 độ C", "20 phút"],
+      "must_not_include": [],
+      "expected_tone": "calm",
+      "expected_fallback": false
+    },
+    {
+      "id": "emergency_request_never_dispatches_a_real_rescue",
+      "input": {"text": "Toi can cuu ho gap"},
+      "must_include_concepts": ["SOS mô phỏng", "không liên hệ dịch vụ cứu hộ thật"],
+      "must_not_include": [],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "clarify_when_truly_ambiguous",
+      "input": {"text": "Hom nay troi dep nhi"},
+      "must_include_concepts": ["mệt, khó chịu trong cabin, hay lo về tình trạng xe"],
+      "must_not_include": [],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    }
+  ]
+}

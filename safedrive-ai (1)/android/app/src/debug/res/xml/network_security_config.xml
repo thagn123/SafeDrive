@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug-only network security config: cleartext is permitted so BASE_URL can point at
+     USB reverse (127.0.0.1), emulator host (10.0.2.2) or an arbitrary LAN IP entered at
+     runtime in Developer Mode. Android's config is static at build time and cannot allowlist
+     a LAN IP unknown until runtime, so cleartext is scoped to the debug variant only.
+     Release always uses src/main/res/xml/network_security_config.xml (HTTPS only, no cleartext,
+     no user certificates) — this file is never merged into a release build.
+     tools:ignore acknowledges that intentionally: lint's AcceptsUserCertificates/
+     InsecureBaseConfiguration checks flag this file regardless of source set. -->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <base-config
+        cleartextTrafficPermitted="true"
+        tools:ignore="AcceptsUserCertificates,InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

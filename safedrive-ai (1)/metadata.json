@@ -1,0 +1,6 @@
+{
+  "name": "SafeDrive AI",
+  "description": "Trợ lý lái xe an toàn HMI Automotive MVP",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

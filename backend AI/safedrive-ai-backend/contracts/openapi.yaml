@@ -1,0 +1,1452 @@
+openapi: 3.0.3
+info:
+  title: SafeDrive AI Backend API
+  version: 1.0.0
+  description: REST API for SafeDrive AI Backend
+servers:
+- url: http://localhost:8000
+security:
+- ApiKeyAuth: []
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-SafeDrive-Key
+  schemas:
+    CanonicalSignalInputBase:
+      type: object
+      required:
+      - signal_id
+      - source
+      - signal_type
+      - occurred_at
+      - value
+      - quality
+      - vehicle_id
+      - trip_id
+      additionalProperties: false
+      properties:
+        signal_id: &id001
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^\S+$
+        source: &id002
+          type: string
+          enum:
+          - VHAL
+          - DMS
+          - DTC
+          - CABIN_CAMERA
+          - USER
+          - SYSTEM
+          - GPS
+          - SIMULATOR
+        signal_type:
+          type: string
+          maxLength: 100
+        occurred_at: &id003
+          type: string
+          format: date-time
+        value: &id004
+          type: object
+        unit: &id005
+          type: string
+        confidence: &id006
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          default: 1.0
+        quality: &id007
+          type: string
+          enum:
+          - VALID
+          - DEGRADED
+          - INVALID
+          default: VALID
+        vehicle_id: &id008
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^\S+$
+        trip_id: &id009
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^\S+$
+        sequence: &id010
+          type: integer
+          minimum: 0
+          default: 0
+        metadata: &id011
+          type: object
+          maxProperties: 20
+    CanonicalSignalInput:
+      oneOf:
+      - $ref: '#/components/schemas/SpeedSignalInput'
+      - $ref: '#/components/schemas/CrashSignalInput'
+      - $ref: '#/components/schemas/SeatbeltSignalInput'
+      - $ref: '#/components/schemas/ParkingBrakeSignalInput'
+      - $ref: '#/components/schemas/DoorOpenSignalInput'
+      - $ref: '#/components/schemas/WindowOpenSignalInput'
+      - $ref: '#/components/schemas/GearSignalInput'
+      - $ref: '#/components/schemas/SteeringAngleSignalInput'
+      - $ref: '#/components/schemas/TirePressureSignalInput'
+      - $ref: '#/components/schemas/BrakePedalSignalInput'
+      - $ref: '#/components/schemas/AcceleratorPedalSignalInput'
+      - $ref: '#/components/schemas/GPSSignalInput'
+      - $ref: '#/components/schemas/HVACTemperatureSignalInput'
+      - $ref: '#/components/schemas/HVACFanSpeedSignalInput'
+      - $ref: '#/components/schemas/HVACACStatusSignalInput'
+      - $ref: '#/components/schemas/DTCCodeSignalInput'
+      - $ref: '#/components/schemas/DriverPerclosSignalInput'
+      - $ref: '#/components/schemas/DriverEyeClosureSignalInput'
+      - $ref: '#/components/schemas/DriverYawningSignalInput'
+      - $ref: '#/components/schemas/DriverHeadPoseSignalInput'
+      - $ref: '#/components/schemas/DriverGazeSignalInput'
+      - $ref: '#/components/schemas/PassengerOccupancySignalInput'
+      - $ref: '#/components/schemas/PassengerMotionSignalInput'
+      - $ref: '#/components/schemas/PassengerPostureSignalInput'
+      - $ref: '#/components/schemas/PassengerHeadPositionSignalInput'
+    SpeedSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.speed_kmh
+          value:
+            type: object
+            required:
+            - value
+            properties:
+              value:
+                type: number
+                minimum: 0.0
+                maximum: 350.0
+            additionalProperties: false
+    CanonicalSignal:
+      type: object
+      required:
+      - signal_id
+      - source
+      - signal_type
+      - occurred_at
+      - value
+      - quality
+      - vehicle_id
+      - trip_id
+      - received_at
+      properties:
+        signal_id: *id001
+        source: *id002
+        signal_type:
+          type: string
+        occurred_at: *id003
+        value: *id004
+        unit: *id005
+        confidence: *id006
+        quality: *id007
+        vehicle_id: *id008
+        trip_id: *id009
+        sequence: *id010
+        metadata: *id011
+        received_at:
+          type: string
+          format: date-time
+    RiskAssessment:
+      type: object
+      required:
+      - risk_assessment_id
+      - vehicle_id
+      - trip_id
+      - risk_level
+      - category
+      properties:
+        risk_assessment_id:
+          type: string
+        vehicle_id:
+          type: string
+        trip_id:
+          type: string
+        risk_level:
+          type: string
+          enum:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        category:
+          type: string
+    ToolCall:
+      type: object
+      required:
+      - tool_call_id
+      - tool_name
+      - arguments
+      - request_id
+      - idempotency_key
+      properties:
+        tool_call_id:
+          type: string
+        tool_name:
+          type: string
+        arguments:
+          type: object
+        request_id:
+          type: string
+        idempotency_key:
+          type: string
+        confirmation_token:
+          type: string
+          nullable: true
+        evidence_refs:
+          type: array
+          items:
+            type: string
+    ToolResult:
+      type: object
+      required:
+      - tool_call_id
+      - status
+      - output
+      - executed_at
+      - latency_ms
+      properties:
+        tool_call_id:
+          type: string
+        status:
+          type: string
+          enum:
+          - SUCCEEDED
+          - REJECTED
+          - FAILED
+          - TIMED_OUT
+        output:
+          type: object
+        error_code:
+          type: string
+          nullable: true
+        executed_at:
+          type: string
+          format: date-time
+        latency_ms:
+          type: integer
+        state_version_after:
+          type: integer
+          nullable: true
+    SafetyResponse:
+      type: object
+      required:
+      - request_id
+      - message
+      - intent
+      - requires_confirmation
+      - fallback_used
+      - state_version
+      properties:
+        request_id:
+          type: string
+        message:
+          type: string
+        intent:
+          type: string
+        risk:
+          $ref: '#/components/schemas/RiskAssessment'
+          nullable: true
+        tool_result:
+          $ref: '#/components/schemas/ToolResult'
+          nullable: true
+        requires_confirmation:
+          type: boolean
+          default: false
+        confirmation_id:
+          type: string
+          nullable: true
+        fallback_used:
+          type: boolean
+          default: false
+        state_version:
+          type: integer
+    SOSStatus:
+      type: object
+      required:
+      - status
+      - updated_at
+      properties:
+        status:
+          type: string
+          enum:
+          - IDLE
+          - RISK_DETECTED
+          - WAITING_FOR_CONFIRMATION
+          - COUNTDOWN
+          - CONFIRMING
+          - DISPATCHED
+          - COMPLETED
+          - FAILED
+          - MANUAL_REVIEW
+          - CANCELLED
+        updated_at:
+          type: string
+          format: date-time
+        remaining_ms:
+          type: integer
+        payload_ref:
+          type: string
+    SOSConfirmRequest:
+      type: object
+      required:
+      - vehicle_id
+      - trip_id
+      properties:
+        vehicle_id:
+          type: string
+        trip_id:
+          type: string
+    SOSCancelRequest:
+      type: object
+      required:
+      - vehicle_id
+      - trip_id
+      - reason
+      properties:
+        vehicle_id:
+          type: string
+        trip_id:
+          type: string
+        reason:
+          type: string
+    DTCResponse:
+      type: object
+      required:
+      - code
+      - description
+      - severity
+      properties:
+        code:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+    AuditResponse:
+      type: object
+      required:
+      - events
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+    HealthResponse:
+      type: object
+      required:
+      - status
+      - request_id
+      - timestamp
+      - schema_version
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+        request_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        schema_version:
+          type: string
+          enum:
+          - '1.0'
+          default: '1.0'
+    ReadinessResponse:
+      type: object
+      required:
+      - status
+      - request_id
+      - timestamp
+      - schema_version
+      properties:
+        status:
+          type: string
+          enum:
+          - ready
+          - not_ready
+        request_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        schema_version:
+          type: string
+          enum:
+          - '1.0'
+          default: '1.0'
+    ErrorEnvelope:
+      type: object
+      required:
+      - error
+      properties:
+        error:
+          type: object
+          required:
+          - code
+          - message
+          - details
+          - request_id
+          - timestamp
+          - schema_version
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+            request_id:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+            schema_version:
+              type: string
+              enum:
+              - '1.0'
+              default: '1.0'
+    SignalBatchRequest:
+      type: object
+      required:
+      - signals
+      additionalProperties: false
+      properties:
+        signals:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/CanonicalSignalInput'
+    SignalBatchResult:
+      type: object
+      required:
+      - request_id
+      - timestamp
+      - schema_version
+      - accepted
+      - duplicate
+      - quarantined
+      - state_version
+      additionalProperties: false
+      properties:
+        request_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        schema_version:
+          type: string
+          enum:
+          - '1.0'
+          default: '1.0'
+        accepted:
+          type: integer
+          minimum: 0
+        duplicate:
+          type: integer
+          minimum: 0
+        quarantined:
+          type: integer
+          minimum: 0
+        state_version:
+          type: integer
+          minimum: 0
+    Freshness:
+      type: object
+      required:
+      - age_ms
+      - status
+      - source
+      additionalProperties: false
+      properties:
+        age_ms:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum:
+          - FRESH
+          - STALE
+          - UNAVAILABLE
+        source:
+          type: string
+    ComponentStateResponse:
+      type: object
+      required:
+      - signal_type
+      - value
+      - updated_at
+      - sequence
+      - source
+      - freshness
+      additionalProperties: false
+      properties:
+        signal_type:
+          type: string
+        value:
+          type: object
+        updated_at:
+          type: string
+          format: date-time
+        sequence:
+          type: integer
+          minimum: 0
+        source:
+          type: string
+        freshness:
+          $ref: '#/components/schemas/Freshness'
+    StateResponse:
+      type: object
+      required:
+      - request_id
+      - timestamp
+      - schema_version
+      - vehicle_id
+      - trip_id
+      - state_version
+      - components
+      additionalProperties: false
+      properties:
+        request_id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        schema_version:
+          type: string
+          enum:
+          - '1.0'
+          default: '1.0'
+        vehicle_id:
+          type: string
+        trip_id:
+          type: string
+        state_version:
+          type: integer
+          minimum: 0
+        components:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ComponentStateResponse'
+    StateSnapshot:
+      $ref: '#/components/schemas/StateResponse'
+
+    CrashSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.crash
+          value:
+            type: object
+            required:
+            - severity
+            properties:
+              severity:
+                type: string
+            additionalProperties: false
+    SeatbeltSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.seatbelt
+          value:
+            type: object
+            required:
+            - engaged
+            properties:
+              engaged:
+                type: boolean
+            additionalProperties: false
+    ParkingBrakeSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.parking_brake
+          value:
+            type: object
+            required:
+            - status
+            properties:
+              status:
+                type: boolean
+            additionalProperties: false
+    DoorOpenSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.door_open
+          value:
+            type: object
+            required:
+            - status
+            properties:
+              status:
+                type: boolean
+            additionalProperties: false
+    WindowOpenSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.window_open
+          value:
+            type: object
+            required:
+            - status
+            properties:
+              status:
+                type: boolean
+            additionalProperties: false
+    GearSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.gear
+          value:
+            type: object
+            required:
+            - gear
+            properties:
+              gear:
+                type: string
+                enum:
+                - P
+                - R
+                - N
+                - D
+            additionalProperties: false
+    SteeringAngleSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.steering_angle
+          value:
+            type: object
+            required:
+            - angle
+            properties:
+              angle:
+                type: number
+                minimum: -1080.0
+                maximum: 1080.0
+            additionalProperties: false
+    TirePressureSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.tire_pressure
+          value:
+            type: object
+            required:
+            - pressure
+            properties:
+              pressure:
+                type: number
+                minimum: 0.0
+                maximum: 100.0
+            additionalProperties: false
+    BrakePedalSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.brake_pedal
+          value:
+            type: object
+            required:
+            - position
+            properties:
+              position:
+                type: number
+                minimum: 0.0
+                maximum: 100.0
+            additionalProperties: false
+    AcceleratorPedalSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.accelerator_pedal
+          value:
+            type: object
+            required:
+            - position
+            properties:
+              position:
+                type: number
+                minimum: 0.0
+                maximum: 100.0
+            additionalProperties: false
+    GPSSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - vehicle.gps
+          value:
+            type: object
+            required:
+            - lat
+            - lon
+            - heading
+            - speed
+            properties:
+              lat:
+                type: number
+                minimum: -90.0
+                maximum: 90.0
+              lon:
+                type: number
+                minimum: -180.0
+                maximum: 180.0
+              heading:
+                type: number
+                minimum: 0.0
+                maximum: 360.0
+              speed:
+                type: number
+                minimum: 0.0
+                maximum: 350.0
+            additionalProperties: false
+    HVACTemperatureSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - hvac.temperature
+          value:
+            type: object
+            required:
+            - temperature
+            properties:
+              temperature:
+                type: number
+                minimum: 10.0
+                maximum: 35.0
+            additionalProperties: false
+    HVACFanSpeedSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - hvac.fan_speed
+          value:
+            type: object
+            required:
+            - speed
+            properties:
+              speed:
+                type: integer
+                minimum: 0
+                maximum: 10
+            additionalProperties: false
+    HVACACStatusSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - hvac.ac_status
+          value:
+            type: object
+            required:
+            - status
+            properties:
+              status:
+                type: boolean
+            additionalProperties: false
+    DTCCodeSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - dtc.code
+          value:
+            type: object
+            required:
+            - code
+            properties:
+              code:
+                type: string
+            additionalProperties: false
+    DriverPerclosSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - driver.perclos
+          value:
+            type: object
+            required:
+            - probability
+            properties:
+              probability:
+                type: number
+                minimum: 0.0
+                maximum: 1.0
+            additionalProperties: false
+    DriverEyeClosureSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - driver.eye_closure
+          value:
+            type: object
+            required:
+            - probability
+            properties:
+              probability:
+                type: number
+                minimum: 0.0
+                maximum: 1.0
+            additionalProperties: false
+    DriverYawningSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - driver.yawning
+          value:
+            type: object
+            required:
+            - probability
+            properties:
+              probability:
+                type: number
+                minimum: 0.0
+                maximum: 1.0
+            additionalProperties: false
+    DriverHeadPoseSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - driver.head_pose
+          value:
+            type: object
+            required:
+            - probability
+            properties:
+              probability:
+                type: number
+                minimum: 0.0
+                maximum: 1.0
+            additionalProperties: false
+    DriverGazeSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - driver.gaze
+          value:
+            type: object
+            required:
+            - probability
+            properties:
+              probability:
+                type: number
+                minimum: 0.0
+                maximum: 1.0
+            additionalProperties: false
+    PassengerOccupancySignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - passenger.occupancy
+          value:
+            type: object
+            required:
+            - status
+            properties:
+              status:
+                type: boolean
+            additionalProperties: false
+    PassengerMotionSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - passenger.motion
+          value:
+            type: object
+            required:
+            - status
+            properties:
+              status:
+                type: boolean
+            additionalProperties: false
+    PassengerPostureSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - passenger.posture
+          value:
+            type: object
+            required:
+            - value
+            properties:
+              value:
+                type: string
+            additionalProperties: false
+    PassengerHeadPositionSignalInput:
+      allOf:
+      - $ref: '#/components/schemas/CanonicalSignalInputBase'
+      - type: object
+        properties:
+          signal_type:
+            type: string
+            enum:
+            - passenger.head_position
+          value:
+            type: object
+            required:
+            - value
+            properties:
+              value:
+                type: string
+            additionalProperties: false
+paths:
+  /health:
+    get:
+      summary: Liveness
+      security: []
+      responses:
+        '200':
+          description: OK
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+              description: Request correlation ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /ready:
+    get:
+      summary: Readiness
+      security: []
+      responses:
+        '200':
+          description: OK
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+              description: Request correlation ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Unavailable
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+              description: Request correlation ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+  /api/v1/state:
+    get:
+      summary: State Snapshot
+      parameters:
+      - name: vehicle_id
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^\S+$
+      - name: trip_id
+        in: query
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^\S+$
+      responses:
+        '200':
+          description: OK
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StateResponse'
+        '401':
+          description: Unauthorized
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Not found
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Validation error
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal server error
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: Service unavailable
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/signals:
+    post:
+      summary: Ingest signals
+      parameters:
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._:-]{1,128}$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignalBatchRequest'
+      responses:
+        '202':
+          description: Accepted
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignalBatchResult'
+        '400':
+          description: Bad request
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Unauthorized
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Conflict
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '413':
+          description: Payload too large
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Unprocessable
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal server error
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: Service unavailable
+          headers:
+            X-Request-ID:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/chat:
+    post:
+      summary: Chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - request_id
+              - session_id
+              - message
+              - locale
+              properties:
+                request_id:
+                  type: string
+                session_id:
+                  type: string
+                message:
+                  type: string
+                locale:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SafetyResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Unprocessable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: Service Unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/intents/resolve:
+    post:
+      summary: Resolve intent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - message
+              properties:
+                message:
+                  type: string
+      responses:
+        '200':
+          description: OK
+        '422':
+          description: Unprocessable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/risk/evaluate:
+    post:
+      summary: Evaluate risk
+      responses:
+        '200':
+          description: OK
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Unprocessable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/tools/execute:
+    post:
+      summary: Execute tool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolCall'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolResult'
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ToolResult'
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Unprocessable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/sos/confirm:
+    post:
+      summary: Confirm SOS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SOSConfirmRequest'
+      responses:
+        '200':
+          description: OK
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '410':
+          description: Gone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/sos/cancel:
+    post:
+      summary: Cancel SOS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SOSCancelRequest'
+      responses:
+        '200':
+          description: OK
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '410':
+          description: Gone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/sos/status:
+    get:
+      summary: SOS Status
+      parameters:
+      - name: vehicle_id
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: trip_id
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SOSStatus'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/dtc:
+    get:
+      summary: Get DTC Info
+      parameters:
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DTCResponse'
+  /api/v1/audit/events:
+    get:
+      summary: Audit Events
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditResponse'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'

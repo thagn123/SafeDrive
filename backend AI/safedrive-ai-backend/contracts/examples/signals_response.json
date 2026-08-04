@@ -1,0 +1,9 @@
+{
+  "request_id": "req_01",
+  "timestamp": "2026-07-29T10:00:00Z",
+  "schema_version": "1.0",
+  "accepted": 1,
+  "duplicate": 0,
+  "quarantined": 0,
+  "state_version": 1
+}

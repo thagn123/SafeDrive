@@ -1,0 +1,10 @@
+{
+  "error": {
+    "code": "STALE_REQUIRED_STATE",
+    "message": "Data is stale.",
+    "details": {},
+    "request_id": "req-123",
+    "timestamp": "2023-10-12T10:00:00Z",
+    "schema_version": "1.0"
+  }
+}

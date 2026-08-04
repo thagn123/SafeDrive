@@ -1,0 +1,17 @@
+{
+  "requestId": "req_001",
+  "message": {
+    "id": "msg_001",
+    "sender": "SAFEDRIVE",
+    "text": "Hiện tại không phát hiện mã lỗi DTC đang hoạt động.",
+    "timestampMs": 1780000000000,
+    "risk": null,
+    "actions": [],
+    "route": "safety_fast_path",
+    "latencyMs": 180
+  },
+  "serverTimeMs": 1780000000000,
+  "serverProcessingMs": 180,
+  "model": "backend-selected",
+  "finishReason": "STOP"
+}

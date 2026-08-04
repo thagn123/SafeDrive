@@ -1,0 +1,12 @@
+=== OLLAMA-UNREACHABLE FALLBACK EVIDENCE (LLM_BASE_URL points to an unused port) ===
+HTTP status: 200
+model field: deterministic-context-router
+llmUsed: False
+fallback: True
+fallbackReason: provider_unavailable
+wall_clock_ms: 2269.6
+route: companion.conversation
+text: Tôi ở đây cùng bạn. Xe đang chạy 72 km/h, cabin 25 độ C. Bạn đã lái khoảng 20 phút rồi. Nếu bạn bắt đầu mệt, hãy nói với tôi hoặc dừng ở vị trí an toàn khi có thể.
+risk_before_call: {"level": "LOW", "title": "Tr\u1ea1ng th\u00e1i v\u1eadn h\u00e0nh b\u00ecnh th\u01b0\u1eddng", "message": "Kh\u00f4ng c\u00f3 \u0111i\u1ec1u ki\u1ec7n r\u1ee7i ro cao n\u00e0o trong d\u1eef li\u1ec7u xe m\u1edbi nh\u1ea5t.", "reasonCodes": []}
+risk_after_call: {"level": "LOW", "title": "Tr\u1ea1ng th\u00e1i v\u1eadn h\u00e0nh b\u00ecnh th\u01b0\u1eddng", "message": "Kh\u00f4ng c\u00f3 \u0111i\u1ec1u ki\u1ec7n r\u1ee7i ro cao n\u00e0o trong d\u1eef li\u1ec7u xe m\u1edbi nh\u1ea5t.", "reasonCodes": []}
+safety_state_unchanged: True

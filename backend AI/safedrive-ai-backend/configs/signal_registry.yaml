@@ -1,0 +1,251 @@
+profiles:
+  PRODUCTION_NO_DMS:
+    description: Production profile without camera/DMS capabilities
+    capabilities:
+    - vehicle.speed_kmh
+    - vehicle.crash
+    - vehicle.seatbelt
+    - vehicle.parking_brake
+    - vehicle.door_open
+    - vehicle.window_open
+    - vehicle.gear
+    - vehicle.steering_angle
+    - vehicle.tire_pressure
+    - vehicle.brake_pedal
+    - vehicle.accelerator_pedal
+    - vehicle.gps
+    - hvac.temperature
+    - hvac.fan_speed
+    - hvac.ac_status
+    - dtc.code
+  DMS_DEMO:
+    description: Simulation profile with simulated camera/DMS features
+    inherits: PRODUCTION_NO_DMS
+    capabilities:
+    - driver.perclos
+    - driver.eye_closure
+    - driver.yawning
+    - driver.head_pose
+    - driver.gaze
+    - passenger.occupancy
+    - passenger.motion
+    - passenger.posture
+    - passenger.head_position
+signals:
+  vehicle.speed_kmh:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 1.0
+    simulated_required: false
+    window_ttl_seconds: 120.0
+    window_max_length: 600
+  vehicle.crash:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 0.5
+    allowed_lateness_seconds: 1.0
+    simulated_required: false
+  vehicle.seatbelt:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  vehicle.parking_brake:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  vehicle.door_open:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  vehicle.window_open:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  vehicle.gear:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  vehicle.steering_angle:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 1.0
+    simulated_required: false
+    window_ttl_seconds: 120.0
+    window_max_length: 600
+  vehicle.tire_pressure:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 60.0
+    allowed_lateness_seconds: 5.0
+    simulated_required: false
+  vehicle.brake_pedal:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 1.0
+    simulated_required: false
+    window_ttl_seconds: 120.0
+    window_max_length: 600
+  vehicle.accelerator_pedal:
+    owner: VHAL
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 1.0
+    simulated_required: false
+    window_ttl_seconds: 120.0
+    window_max_length: 600
+  vehicle.gps:
+    owner: GPS
+    source_allowed:
+    - GPS
+    - SIMULATOR
+    ttl_seconds: 30.0
+    allowed_lateness_seconds: 5.0
+    simulated_required: false
+  hvac.temperature:
+    owner: HVAC
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 10.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  hvac.fan_speed:
+    owner: HVAC
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 10.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  hvac.ac_status:
+    owner: HVAC
+    source_allowed:
+    - VHAL
+    - SIMULATOR
+    ttl_seconds: 10.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: false
+  dtc.code:
+    owner: DTC
+    source_allowed:
+    - DTC
+    - SIMULATOR
+    ttl_seconds: 60.0
+    allowed_lateness_seconds: 10.0
+    simulated_required: false
+    window_ttl_seconds: 1800.0
+    window_max_length: 100
+  driver.perclos:
+    owner: DMS
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300
+  driver.eye_closure:
+    owner: DMS
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300
+  driver.yawning:
+    owner: DMS
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300
+  driver.head_pose:
+    owner: DMS
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300
+  driver.gaze:
+    owner: DMS
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 2.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300
+  passenger.occupancy:
+    owner: CABIN_CAMERA
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+  passenger.motion:
+    owner: CABIN_CAMERA
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300
+  passenger.posture:
+    owner: CABIN_CAMERA
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300
+  passenger.head_position:
+    owner: CABIN_CAMERA
+    source_allowed:
+    - SIMULATOR
+    ttl_seconds: 5.0
+    allowed_lateness_seconds: 2.0
+    simulated_required: true
+    window_ttl_seconds: 300.0
+    window_max_length: 300

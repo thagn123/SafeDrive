@@ -1,0 +1,11 @@
+{
+  "status": "NORMAL",
+  "service": "safedrive-mock",
+  "apiVersion": "v1",
+  "serverTimeMs": 1780000000000,
+  "capabilities": {
+    "assistant": true,
+    "emergencySimulation": true,
+    "cockpitStream": false
+  }
+}

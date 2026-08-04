@@ -1,0 +1,253 @@
+package vn.edu.haui.hvs.safedrive.feature.emergency
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import vn.edu.haui.hvs.safedrive.core.designsystem.Dimensions
+import vn.edu.haui.hvs.safedrive.core.designsystem.LocalSafeDriveStatusColors
+import vn.edu.haui.hvs.safedrive.core.model.EmergencyState
+import vn.edu.haui.hvs.safedrive.core.model.RescueBrief
+import vn.edu.haui.hvs.safedrive.core.model.RescueDispatchReceipt
+
+/**
+ * Full-screen Emergency renderer per docs/android-mvp-plan/04-screen-specs.md ("Emergency/SOS"):
+ * blocks Back, no swipe/tap-outside dismissal, hides bottom navigation (the caller in
+ * `SafeDriveApp.kt` skips the Scaffold bottom bar while this is shown). `realEmergencyDispatchEnabled`
+ * is always false — this only ever renders a simulated payload.
+ */
+@Composable
+fun EmergencyScreen(viewModel: EmergencyViewModel, onTriggerVoiceCancel: () -> Unit) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val active = state as? EmergencyUiState.Active ?: return
+
+    // Consume Back entirely — no state change, matching "không dismiss bằng Back/swipe/tap outside".
+    BackHandler(enabled = true) {}
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFF08131F))
+            .padding(Dimensions.screenPadding)
+            .semantics {
+                contentDescription = "Màn hình khẩn cấp"
+                liveRegion = LiveRegionMode.Assertive
+            },
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        TopBanner()
+
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = Color(0xFFF87171),
+                modifier = Modifier.padding(top = 24.dp),
+            )
+
+            when (active.state) {
+                EmergencyState.CANDIDATE_DETECTED, EmergencyState.VERIFYING_EVIDENCE -> VerifyingContent(active.remainingSeconds)
+                EmergencyState.AWAITING_USER_RESPONSE -> AwaitingResponseContent(active.remainingSeconds, onConfirmSafe = viewModel::confirmSafe)
+                EmergencyState.FINAL_COUNTDOWN -> FinalCountdownContent(active.remainingSeconds, onCancel = viewModel::cancelSos)
+                EmergencyState.SOS_SIMULATED_SENT -> SentContent(active, onAcknowledge = viewModel::acknowledgeSent)
+                EmergencyState.IDLE, EmergencyState.CANCELLED -> Unit
+            }
+
+            if (active.state != EmergencyState.SOS_SIMULATED_SENT) {
+                EvidenceCard(active, onTriggerVoiceCancel)
+            }
+        }
+
+        Text(
+            "SafeDrive AI Automotive HMI — HaUI Vehicle Smart Systems (HVS)",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF64748B),
+        )
+    }
+}
+
+@Composable
+private fun TopBanner() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            "SOS MÔ PHỎNG (KHÔNG PHẢI CỨU HỘ THẬT)",
+            style = MaterialTheme.typography.labelMedium,
+            color = Color(0xFFFCA5A5),
+        )
+        Text(
+            "real_emergency_dispatch_enabled: false",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF64748B),
+        )
+    }
+}
+
+@Composable
+private fun VerifyingContent(remainingSeconds: Int) {
+    Text("BƯỚC 1/3: XÁC MINH BẰNG CHỨNG CẢM BIẾN", style = MaterialTheme.typography.labelMedium, color = Color(0xFFFBBF24))
+    Text("Đang xác minh tình huống khẩn cấp...", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+    Text(
+        "Hệ thống đang đối chiếu dữ liệu cảm biến gia tốc, trạng thái dừng xe và cảm biến ghế lái.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = Color(0xFFCBD5E1),
+    )
+    Text("Thời gian xác minh: ${remainingSeconds}s", style = MaterialTheme.typography.headlineMedium, color = Color(0xFFFBBF24))
+}
+
+@Composable
+private fun AwaitingResponseContent(remainingSeconds: Int, onConfirmSafe: () -> Unit) {
+    Text("BƯỚC 2/3: CHỜ XÁC NHẬN TỪ NGƯỜI LÁI", style = MaterialTheme.typography.labelMedium, color = Color(0xFFFDBA74))
+    Text("Bạn có ổn không?", style = MaterialTheme.typography.headlineMedium, color = Color.White)
+    Text(
+        "Nếu bạn vẫn ổn, hãy nói \"Tôi ổn\" hoặc nhấn nút bên dưới.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = Color(0xFFE2E8F0),
+    )
+    Text("Thời gian chờ: ${remainingSeconds}s", style = MaterialTheme.typography.headlineMedium, color = Color(0xFFFB923C))
+    Button(onClick = onConfirmSafe, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Filled.CheckCircle, contentDescription = null)
+        Text(" TÔI VẪN ỔN — HỦY SOS", modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+@Composable
+private fun FinalCountdownContent(remainingSeconds: Int, onCancel: () -> Unit) {
+    Text(
+        "BƯỚC 3/3: ĐẾM NGƯỢC GỬI TÍN HIỆU SOS MÔ PHỎNG",
+        style = MaterialTheme.typography.labelMedium,
+        color = Color(0xFFFCA5A5),
+    )
+    Text("SOS mô phỏng sẽ được gửi sau ${remainingSeconds}s", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+    Text(
+        "Không nhận được phản hồi. Hệ thống chuẩn bị phát tín hiệu cứu hộ giả lập.",
+        style = MaterialTheme.typography.bodyMedium,
+        color = Color(0xFFFECACA),
+    )
+    Text("${remainingSeconds}s", style = MaterialTheme.typography.displayMedium, color = Color(0xFFF87171))
+    Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
+        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFF34D399))
+        Text(" HỦY SOS — TÔI VẪN ỔN", modifier = Modifier.padding(start = 8.dp))
+    }
+}
+
+@Composable
+private fun SentContent(active: EmergencyUiState.Active, onAcknowledge: () -> Unit) {
+    val colors = LocalSafeDriveStatusColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF042F1E), RoundedCornerShape(Dimensions.cardCornerRadius))
+            .padding(Dimensions.cardPadding),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = colors.normal.icon)
+        Text("Đã gửi tín hiệu SOS mô phỏng khẩn cấp", style = MaterialTheme.typography.titleLarge, color = Color.White)
+        Text(
+            "Bằng chứng sự cố đã được đóng gói trong gói tin thử nghiệm SafeDrive AI. Đây là mô phỏng — không có cuộc gọi hay tin nhắn thật nào được gửi.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color(0xFFE2E8F0),
+        )
+        active.rescueBrief?.let { brief ->
+            RescueBriefSummary(brief, active.rescueDispatch)
+        }
+        Button(onClick = onAcknowledge, modifier = Modifier.fillMaxWidth()) {
+            Text("Quay lại Cockpit")
+        }
+    }
+}
+
+@Composable
+private fun RescueBriefSummary(brief: RescueBrief, receipt: RescueDispatchReceipt?) {
+    Text("GÓI TIN CỨU HỘ MÔ PHỎNG", style = MaterialTheme.typography.labelMedium, color = Color(0xFFFDE68A))
+    Text(brief.vehicleStatusSummary, style = MaterialTheme.typography.bodySmall, color = Color.White)
+    val location = brief.lastKnownLocation
+    val locationText = if (location == null) {
+        "Vị trí cuối: không có dữ liệu GPS/simulator"
+    } else {
+        "Vị trí cuối: %.4f, %.4f · %s · %d ms".format(
+            location.latitude,
+            location.longitude,
+            location.freshness,
+            location.ageMs,
+        )
+    }
+    Text(locationText, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE2E8F0))
+    Text(
+        receipt?.let { "Mock rescue gateway accepted: ${it.referenceId}" }
+            ?: "Đang chờ mock rescue gateway xác nhận.",
+        style = MaterialTheme.typography.labelSmall,
+        color = Color(0xFF86EFAC),
+    )
+}
+
+@Composable
+private fun EvidenceCard(active: EmergencyUiState.Active, onTriggerVoiceCancel: () -> Unit) {
+    val colors = LocalSafeDriveStatusColors.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF0F1D2C), RoundedCornerShape(Dimensions.cardCornerRadius))
+            .padding(Dimensions.cardPadding),
+    ) {
+        Text(
+            "Bằng chứng xác minh gián tiếp (${active.evidence.size} tín hiệu):",
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.onSurfaceMuted,
+        )
+        active.evidence.forEach { evidence ->
+            Text("• ${evidence.label}", style = MaterialTheme.typography.bodySmall, color = Color.White)
+        }
+        // Advisory-only LLM second opinion (see EmergencyLLMReasoner on the backend) — never the
+        // primary evidence above, never changes the countdown, just an extra explanation when present.
+        active.reasoningSummary?.let { reasoning ->
+            Text(
+                "Nhận định bổ sung từ AI: $reasoning",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF93C5FD),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        if (active.developerMode) {
+            Text(
+                "Reason codes: ${active.evidence.joinToString(", ") { it.code }}",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.normal.icon,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+        Button(onClick = onTriggerVoiceCancel, modifier = Modifier.padding(top = 12.dp)) {
+            Text("Nói \"Tôi ổn\" / \"Hủy SOS\"")
+        }
+    }
+}

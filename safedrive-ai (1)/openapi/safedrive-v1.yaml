@@ -1,0 +1,778 @@
+openapi: 3.0.3
+info:
+  title: SafeDrive AI Backend API
+  version: "1.0.0"
+  description: |
+    Backend contract **candidate** from docs/android-mvp-plan/12-mobile-completion-before-ai-backend.md
+    (W7) — not yet "frozen": Gate E additionally requires device QA and a human backend/Android owner
+    review of the handoff package, neither of which has happened yet, so this shape may still change.
+    This is the machine-readable source of truth for the Android client and the AI Backend — prose in
+    docs/android-mvp-plan/03-data-api-contract.md explains rationale but must not override this schema
+    (docs/android-mvp-plan/12 §1.1).
+
+    Scope v1: transcript-only voice (source=VOICE sends recognized text, never audio bytes/URI — see
+    "Out of scope" below). REST only; WebSocket cockpit streaming is explicitly deferred past this
+    gate (docs/android-mvp-plan/03-data-api-contract.md, "WS /api/v1/ws/cockpit").
+
+    Safety invariants (never change without a new major contractVersion and a safety review):
+      - `realEmergencyDispatchEnabled` is always `false` in this MVP. No client build ever calls
+        emergency services, SMS, or a phone call as a result of any response on this API.
+      - The backend is authority for risk/rest recommendation, DTC severity and emergency deadline
+        in Remote Mode; the client never recomputes or overrides these.
+      - No API key or model secret is ever requested from or sent by the Android client.
+
+    Out of scope for v1 (see docs/android-mvp-plan/12 §11):
+      - Raw audio upload/storage of any kind.
+      - Gemini Live / streaming responses / WebSocket.
+      - Maps, VHAL, camera/DMS, wearable production integrations.
+      - Real emergency dispatch (call/SMS/rescue).
+tags:
+  - name: health
+  - name: session
+  - name: state
+  - name: assistant
+  - name: events
+  - name: actions
+  - name: emergency
+servers:
+  - url: "https://{host}/"
+    variables:
+      host:
+        default: api.example.com
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Backend health and capability negotiation
+      description: |
+        Called only from Settings' "Kiểm tra sức khỏe backend" (manual, never polled automatically).
+        Android caps this call at a 5s client-side timeout (docs/android-mvp-plan/12 W5, W5.9).
+      operationId: checkHealth
+      responses:
+        "200":
+          description: Backend reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              examples:
+                default:
+                  $ref: "./examples/health-ok.json"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/sessions/start:
+    post:
+      tags: [session]
+      summary: Start (or resume) a session for the current (mode, baseUrl) pair
+      description: |
+        Session id is cached by the client keyed on `(backendMode, baseUrl)` and refreshed on
+        expiry (docs/android-mvp-plan/12 W5.1-W5.3). On failure, the client does **not** fabricate a
+        local session id and continue — the whole calling operation fails
+        (docs/android-mvp-plan/12 W5.5).
+      operationId: startSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartSessionRequest"
+            examples:
+              default:
+                $ref: "./examples/session-start.json"
+      responses:
+        "200":
+          description: Session started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/state/update:
+    post:
+      tags: [state]
+      summary: Push the latest vehicle state / driver-support signals, receive risk+rest enrichment
+      description: |
+        Called on every vehicle-state change from `ObserveCockpitUseCase`, and also whenever backend
+        mode/BASE_URL changes with no other state change (docs/android-mvp-plan/12 W5.8), so Cockpit
+        always reflects the currently-selected gateway.
+      operationId: updateState
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StateUpdateRequest"
+            examples:
+              default:
+                $ref: "./examples/state-update.json"
+      responses:
+        "200":
+          description: Enriched state envelope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateEnvelope"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/state:
+    get:
+      tags: [state]
+      summary: Bootstrap/poll the last accepted state envelope
+      description: |
+        Used for bootstrap and retry-after-reconnect only; not a substitute for
+        `POST /api/v1/state/update`, and not a WebSocket replacement (that is out of scope for v1).
+      operationId: getState
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema: { type: string }
+        - name: sinceVersion
+          in: query
+          required: false
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Last known state envelope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StateEnvelope"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/assistant/query:
+    post:
+      tags: [assistant]
+      summary: Single entry point for text, quick-prompt and voice (transcript) assistant turns
+      description: |
+        The **only** assistant endpoint — text, quick-prompt and voice all call this with a
+        different `source` (docs/android-mvp-plan/12 W1/W7.3). `source=VOICE` always carries the
+        already-recognized transcript in `text`; there is no raw-audio variant in v1
+        (docs/android-mvp-plan/12 §3.1/§11/W7.8).
+
+        Client enforces a single 10s total deadline covering session resolution + this call
+        (docs/android-mvp-plan/12 W5.4/W5.11) — the server does not need to reserve extra time for a
+        separate session round trip.
+
+        The client never auto-retries this call after it has been sent; a user-initiated retry sends
+        a new `requestId` with `clientAttemptOf` set to the original `requestId`
+        (docs/android-mvp-plan/12 W1.12/W5.14).
+      operationId: queryAssistant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistantQueryRequest"
+            examples:
+              text:
+                $ref: "./examples/assistant-text-query.json"
+              voice:
+                $ref: "./examples/assistant-voice-query.json"
+      responses:
+        "200":
+          description: Assistant reply
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistantQueryResponse"
+              examples:
+                default:
+                  $ref: "./examples/assistant-response.json"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/events:
+    post:
+      tags: [events]
+      summary: Fire-and-forget telemetry/analytics event
+      description: |
+        Used today for `SCENARIO_APPLIED` (Simulator). Never blocks a user-facing action on its
+        result; the Android client silently skips sending if session resolution itself fails.
+      operationId: sendEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventRequest"
+      responses:
+        "200":
+          description: Event accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventAccepted"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/actions/confirm:
+    post:
+      tags: [actions]
+      summary: Confirm or decline a SafeDriveAction that required confirmation
+      description: |
+        Only ever called for actions with `requiresConfirmation = true` — see
+        `docs/assistant-action-allowlist.md` for the candidate allowlist and per-action confirmation
+        rules (not "frozen" until Gate E's device-QA/human-review criteria also pass).
+      operationId: confirmAction
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActionConfirmRequest"
+            examples:
+              default:
+                $ref: "./examples/action-confirm.json"
+      responses:
+        "200":
+          description: Confirmation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionConfirmResponse"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/emergency/{id}:
+    get:
+      tags: [emergency]
+      summary: Fetch an emergency snapshot (Remote Mode authority only)
+      description: |
+        Demo Mode's emergency authority is the local on-device reducer, not this endpoint
+        (`GatewayError.Unsupported`/HTTP 404 in Demo — see `docs/MOCK_VS_REMOTE_COVERAGE.md` under
+        `android/`). `realEmergencyDispatchEnabled` is always `false` regardless of any value the
+        backend returns — the client hard-codes this and ignores the wire value.
+      operationId: getEmergency
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: sessionId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Emergency snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencySnapshot"
+              examples:
+                default:
+                  $ref: "./examples/emergency-snapshot.json"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /api/v1/emergency/{id}/respond:
+    post:
+      tags: [emergency]
+      summary: Respond to an active emergency (Remote Mode authority only)
+      operationId: respondEmergency
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmergencyResponseRequest"
+      responses:
+        "200":
+          description: Updated emergency snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencySnapshot"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  responses:
+    Error:
+      description: Typed error envelope (docs/android-mvp-plan/12 W7.2)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          examples:
+            default:
+              $ref: "./examples/error-envelope.json"
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [code, message, requestId, retryable, serverTimeMs]
+      properties:
+        code:
+          type: string
+          description: |
+            Maps 1:1 to the Android `GatewayError` sealed type: `TIMEOUT`, `OFFLINE`, `UNAUTHORIZED`,
+            `UNSUPPORTED`, `CONFLICT`, `VALIDATION`, `SERVER`, `PROTOCOL`. `CONFIGURATION` is
+            client-local only (Remote Mode with no BASE_URL) and never appears on the wire.
+          enum: [TIMEOUT, OFFLINE, UNAUTHORIZED, UNSUPPORTED, CONFLICT, VALIDATION, SERVER, PROTOCOL]
+        message:
+          type: string
+        requestId:
+          type: string
+          nullable: true
+          description: Echoes the request's requestId/eventId when the error is tied to one.
+        retryable:
+          type: boolean
+          description: |
+            Advisory only — the Android client currently never auto-retries the assistant query
+            regardless of this value (W5.14); it may inform future UI ("Thử lại" affordance hints).
+        serverTimeMs:
+          type: integer
+          format: int64
+
+    HealthCapabilities:
+      type: object
+      required: [assistant, emergencySimulation, cockpitStream]
+      properties:
+        assistant:
+          type: boolean
+          description: When false, Android fails assistant queries fast without calling this endpoint (W5.10).
+        emergencySimulation:
+          type: boolean
+        cockpitStream:
+          type: boolean
+          description: Always false until WebSocket streaming ships in a later phase.
+
+    HealthResponse:
+      type: object
+      required: [status, service, apiVersion, serverTimeMs, capabilities]
+      properties:
+        status:
+          type: string
+          enum: [NORMAL, OFFLINE, NO_AI_SERVICE, NO_VEHICLE_DATA, STALE_DATA]
+        service:
+          type: string
+          example: safedrive-mock
+        apiVersion:
+          type: string
+          example: v1
+        serverTimeMs:
+          type: integer
+          format: int64
+        capabilities:
+          $ref: "#/components/schemas/HealthCapabilities"
+
+    StartSessionRequest:
+      type: object
+      required: [deviceId, appVersion, platform, mode, clientTimeMs]
+      properties:
+        deviceId: { type: string }
+        appVersion: { type: string }
+        platform: { type: string, example: android }
+        mode:
+          type: string
+          enum: [DEMO, REMOTE]
+          description: Reflects the client's actual current backend mode (never hard-coded — W5.1).
+        clientTimeMs: { type: integer, format: int64 }
+
+    SessionInfo:
+      type: object
+      required: [sessionId, expiresAtMs, serverTimeMs, contractVersion, realEmergencyDispatchEnabled]
+      properties:
+        sessionId: { type: string }
+        expiresAtMs:
+          type: integer
+          format: int64
+          description: Client checks this before reusing a cached session id (W5.3).
+        serverTimeMs: { type: integer, format: int64 }
+        contractVersion: { type: string, example: "v1" }
+        realEmergencyDispatchEnabled:
+          type: boolean
+          description: |
+            The client hard-codes this to `false` regardless of what the backend sends
+            (`SessionCoordinator`/`ApiMappers.kt` — "MVP invariant; never trust a backend-sent true").
+
+    Dtc:
+      type: object
+      required: [code, title, description, severity, recommendation, updatedAtMs]
+      properties:
+        code: { type: string, example: P0301 }
+        title: { type: string }
+        description: { type: string }
+        severity: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+        recommendation: { type: string }
+        updatedAtMs: { type: integer, format: int64 }
+
+    VehicleLocation:
+      type: object
+      required: [latitude, longitude, source, capturedAtMs]
+      description: Last known GPS or simulator location. Optional on VehicleState.
+      properties:
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+        source: { type: string, enum: [GPS, SIMULATOR, GPS_OR_SIMULATOR] }
+        capturedAtMs: { type: integer, format: int64 }
+
+    VehicleState:
+      type: object
+      required:
+        - speedKmh
+        - engineTemperatureC
+        - cabinTemperatureC
+        - energyPercent
+        - wearableConnected
+        - activeDtcs
+        - crashDetected
+        - passengerResponse
+        - updatedAtMs
+      properties:
+        speedKmh: { type: number, format: float }
+        engineTemperatureC: { type: number, format: float }
+        cabinTemperatureC: { type: number, format: float }
+        energyPercent: { type: integer }
+        continuousDrivingMinutes: { type: integer, nullable: true }
+        steeringLastInteractionSeconds: { type: integer, nullable: true }
+        driverSeatOccupied: { type: boolean, nullable: true }
+        wearableConnected: { type: boolean }
+        activeDtcs:
+          type: array
+          items: { $ref: "#/components/schemas/Dtc" }
+        crashDetected: { type: boolean }
+        passengerResponse: { type: string, enum: [RESPONSIVE, NO_RESPONSE, UNKNOWN] }
+        updatedAtMs: { type: integer, format: int64 }
+        hvacTargetTemperatureC:
+          type: number
+          format: float
+          nullable: true
+          minimum: 16
+          maximum: 30
+          description: Current requested HVAC target from VHAL or the simulation-only control tool.
+        location:
+          allOf: [{ $ref: "#/components/schemas/VehicleLocation" }]
+          nullable: true
+          description: Optional current or last known location from a GPS or simulator adapter.
+
+    DriverSupportSignals:
+      type: object
+      required: [steeringSignalAvailable, seatSensorAvailable, availableSourceCount, totalSourceCount]
+      properties:
+        steeringSignalAvailable: { type: boolean }
+        seatSensorAvailable: { type: boolean }
+        wearableLastUpdateMs: { type: integer, format: int64, nullable: true }
+        wearableHeartRateBpm: { type: integer, nullable: true }
+        userReportedFatigue: { type: boolean, nullable: true }
+        availableSourceCount: { type: integer }
+        totalSourceCount: { type: integer }
+
+    RiskAssessment:
+      type: object
+      required: [level, title, message, reasonCodes]
+      properties:
+        level: { type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL] }
+        title: { type: string }
+        message: { type: string }
+        reasonCodes:
+          type: array
+          items: { type: string }
+
+    RestRecommendation:
+      type: object
+      required: [level, title, message, confidence, reasonCodes, updatedAtMs]
+      properties:
+        level: { type: string, enum: [INSUFFICIENT_DATA, NORMAL, MONITOR, CONSIDER_REST, REST_RECOMMENDED] }
+        title: { type: string }
+        message: { type: string }
+        confidence: { type: string, enum: [LOW, MEDIUM, HIGH] }
+        reasonCodes:
+          type: array
+          items: { type: string }
+        updatedAtMs: { type: integer, format: int64 }
+
+    StateUpdateRequest:
+      type: object
+      required: [sessionId, state, driverSupportSignals, source, clientEventId]
+      properties:
+        sessionId: { type: string }
+        state: { $ref: "#/components/schemas/VehicleState" }
+        driverSupportSignals: { $ref: "#/components/schemas/DriverSupportSignals" }
+        source: { type: string, enum: [MOCK, PHONE_SIMULATOR, VEHICLE_ADAPTER] }
+        clientEventId: { type: string }
+
+    StateEnvelope:
+      type: object
+      required: [state, driverSupportSignals, riskAssessment, restRecommendation, stateVersion, acceptedAtMs]
+      properties:
+        state: { $ref: "#/components/schemas/VehicleState" }
+        driverSupportSignals: { $ref: "#/components/schemas/DriverSupportSignals" }
+        riskAssessment: { $ref: "#/components/schemas/RiskAssessment" }
+        restRecommendation: { $ref: "#/components/schemas/RestRecommendation" }
+        stateVersion: { type: integer, format: int64 }
+        acceptedAtMs: { type: integer, format: int64 }
+        emergency:
+          allOf: [{ $ref: "#/components/schemas/EmergencySnapshot" }]
+          nullable: true
+          description: Additive authoritative emergency state for Remote Mode.
+
+    AssistantContext:
+      type: object
+      required: [stateVersion, screen]
+      properties:
+        stateVersion: { type: integer, format: int64 }
+        screen:
+          type: string
+          description: UI surface the turn originated from (e.g. "cockpit", "assistant", "diagnostics").
+
+    AssistantQueryRequest:
+      type: object
+      required: [sessionId, requestId, text, context]
+      properties:
+        sessionId: { type: string }
+        requestId: { type: string }
+        text: { type: string }
+        source:
+          type: string
+          enum: [TEXT, VOICE, QUICK_PROMPT, RETRY]
+          default: TEXT
+          description: |
+            How this turn originated (docs/android-mvp-plan/12 W1.1/W7.3). `VOICE` always carries an
+            already-recognized transcript — v1 has no raw-audio field or endpoint.
+        locale:
+          type: string
+          default: vi-VN
+        clientAttemptOf:
+          type: string
+          nullable: true
+          description: |
+            `null` on a first attempt; the original turn's `requestId` on a user-initiated retry
+            (W1.12). The client never sets this automatically — only an explicit user retry action does.
+        context:
+          $ref: "#/components/schemas/AssistantContext"
+
+    SafeDriveAction:
+      type: object
+      required: [id, type, title, requiresConfirmation]
+      properties:
+        id: { type: string }
+        type:
+          type: string
+          enum: [SHOW_WARNING, OPEN_DIAGNOSTICS, SUGGEST_REST_STOP, START_SOS_COUNTDOWN, SET_HVAC_TEMPERATURE, NONE]
+        title: { type: string }
+        requiresConfirmation:
+          type: boolean
+          description: See docs/assistant-action-allowlist.md for the candidate per-type rule.
+        hvacTargetTemperatureC:
+          type: number
+          format: float
+          nullable: true
+          minimum: 16
+          maximum: 30
+          description: Present only for SET_HVAC_TEMPERATURE. Typed by design; no arbitrary parameter bag is allowed.
+
+    ChatMessage:
+      type: object
+      required: [id, sender, text, timestampMs]
+      properties:
+        id: { type: string }
+        sender: { type: string, enum: [USER, SAFEDRIVE] }
+        text: { type: string }
+        timestampMs: { type: integer, format: int64 }
+        risk:
+          allOf: [{ $ref: "#/components/schemas/RiskAssessment" }]
+          nullable: true
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/SafeDriveAction" }
+          default: []
+        route:
+          type: string
+          nullable: true
+          description: Free-form backend routing tag, e.g. "safety_fast_path". Observability only.
+        latencyMs:
+          type: integer
+          format: int64
+          nullable: true
+
+    AssistantQueryResponse:
+      type: object
+      required: [requestId, message, serverTimeMs]
+      properties:
+        requestId: { type: string }
+        message: { $ref: "#/components/schemas/ChatMessage" }
+        serverTimeMs: { type: integer, format: int64 }
+        serverProcessingMs:
+          type: integer
+          format: int64
+          nullable: true
+          description: Additive/optional (W7.4) — Developer Mode observability only.
+        model:
+          type: string
+          nullable: true
+          description: |
+            Additive/optional, Developer Mode observability only (W7.4). Android never selects or
+            depends on a specific model; this is purely informational.
+        finishReason:
+          type: string
+          nullable: true
+          example: STOP
+        safetyMetadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: |
+            RESERVED for a future phase (docs/android-mvp-plan/12 §11 backlog). Not yet parsed by the
+            Android client — `ignoreUnknownKeys` guarantees adding real content here later is a
+            strictly additive change, never a breaking one. Do not depend on any shape today.
+
+    EventRequest:
+      type: object
+      required: [sessionId, eventId, type, occurredAtMs]
+      properties:
+        sessionId: { type: string }
+        eventId: { type: string }
+        type:
+          type: string
+          enum: [USER_REPORTED_FATIGUE, VOICE_ERROR, SCENARIO_APPLIED, CONNECTION_CHANGED]
+        occurredAtMs: { type: integer, format: int64 }
+        reason:
+          type: string
+          nullable: true
+          description: Populated only when type=VOICE_ERROR.
+        scenarioId:
+          type: string
+          nullable: true
+          description: Populated only when type=SCENARIO_APPLIED.
+        connectionStatus:
+          type: string
+          nullable: true
+          enum: [NORMAL, OFFLINE, NO_AI_SERVICE, NO_VEHICLE_DATA, STALE_DATA]
+          description: Populated only when type=CONNECTION_CHANGED.
+
+    EventAccepted:
+      type: object
+      required: [eventId, accepted, acceptedAtMs]
+      properties:
+        eventId: { type: string }
+        accepted: { type: boolean }
+        acceptedAtMs: { type: integer, format: int64 }
+        stateVersion: { type: integer, format: int64, nullable: true }
+
+    ActionConfirmRequest:
+      type: object
+      required: [sessionId, actionId, actionType, confirmed, confirmationId, contextVersion]
+      properties:
+        sessionId: { type: string }
+        actionId: { type: string }
+        actionType:
+          type: string
+          enum: [SHOW_WARNING, OPEN_DIAGNOSTICS, SUGGEST_REST_STOP, START_SOS_COUNTDOWN, SET_HVAC_TEMPERATURE, NONE]
+        confirmed: { type: boolean }
+        confirmationId: { type: string }
+        contextVersion: { type: integer, format: int64 }
+        hvacTargetTemperatureC:
+          type: number
+          format: float
+          nullable: true
+          minimum: 16
+          maximum: 30
+          description: Required only when actionType is SET_HVAC_TEMPERATURE.
+
+    ActionConfirmResponse:
+      type: object
+      required: [accepted, serverTimeMs]
+      properties:
+        accepted: { type: boolean }
+        actionResult: { type: string, nullable: true }
+        message: { type: string, nullable: true }
+        serverTimeMs: { type: integer, format: int64 }
+
+    EvidenceItem:
+      type: object
+      required: [code, label, detectedAtMs]
+      properties:
+        code: { type: string }
+        label: { type: string }
+        detectedAtMs: { type: integer, format: int64 }
+
+    RescueLocation:
+      type: object
+      required: [latitude, longitude, source, ageMs, freshness]
+      properties:
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        source: { type: string, enum: [GPS, SIMULATOR, GPS_OR_SIMULATOR] }
+        ageMs: { type: integer, format: int64, minimum: 0 }
+        freshness: { type: string, enum: [FRESH, STALE] }
+
+    RescueBrief:
+      type: object
+      required: [dispatchMode, eventType, vehicleId, timestampMs, locationStatus, vehicleStatusSummary, riskLevel, evidence, realEmergencyDispatchEnabled]
+      description: |
+        Compact rescue handoff produced only by the simulated crash/no-response workflow.
+        It is never a medical diagnosis and is never sent to a real emergency service in the MVP.
+      properties:
+        dispatchMode: { type: string, enum: [SIMULATION_ONLY] }
+        eventType: { type: string, enum: [CRASH_AND_NO_RESPONSE] }
+        vehicleId: { type: string }
+        timestampMs: { type: integer, format: int64 }
+        lastKnownLocation:
+          allOf: [{ $ref: "#/components/schemas/RescueLocation" }]
+          nullable: true
+        locationStatus: { type: string, enum: [FRESH, STALE, UNAVAILABLE] }
+        vehicleStatusSummary: { type: string }
+        riskLevel: { type: string, enum: [CRITICAL] }
+        evidence:
+          type: array
+          items: { type: string }
+        realEmergencyDispatchEnabled: { type: boolean, enum: [false] }
+
+    RescueDispatchReceipt:
+      type: object
+      required: [provider, endpoint, outcome, referenceId, receivedAtMs]
+      description: Receipt from an in-memory mock gateway, never a real emergency service.
+      properties:
+        provider: { type: string, enum: [MOCK_ROADSIDE_ASSISTANCE_GATEWAY] }
+        endpoint: { type: string, enum: ["mock://safedrive-rescue-gateway/v1/events"] }
+        outcome: { type: string, enum: [SIMULATED_ACCEPTED] }
+        referenceId: { type: string }
+        receivedAtMs: { type: integer, format: int64 }
+
+    EmergencySnapshot:
+      type: object
+      required: [emergencyId, state, realEmergencyDispatchEnabled]
+      properties:
+        emergencyId: { type: string }
+        state:
+          type: string
+          enum: [IDLE, CANDIDATE_DETECTED, VERIFYING_EVIDENCE, AWAITING_USER_RESPONSE, FINAL_COUNTDOWN, SOS_SIMULATED_SENT, CANCELLED]
+        deadlineMs: { type: integer, format: int64, nullable: true }
+        evidence:
+          type: array
+          items: { $ref: "#/components/schemas/EvidenceItem" }
+          default: []
+        rescueBrief:
+          allOf: [{ $ref: "#/components/schemas/RescueBrief" }]
+          nullable: true
+        rescueDispatch:
+          allOf: [{ $ref: "#/components/schemas/RescueDispatchReceipt" }]
+          nullable: true
+        realEmergencyDispatchEnabled:
+          type: boolean
+          description: |
+            The Android client hard-codes this to `false` regardless of the wire value — see the
+            safety invariant note at the top of this document. Never implement real dispatch behind
+            this flag.
+
+    EmergencyResponseRequest:
+      type: object
+      required: [sessionId, responseId, response, clientTimeMs]
+      properties:
+        sessionId: { type: string }
+        responseId: { type: string }
+        response: { type: string, enum: [USER_OK, CANCEL_SOS, NO_RESPONSE] }
+        clientTimeMs: { type: integer, format: int64 }

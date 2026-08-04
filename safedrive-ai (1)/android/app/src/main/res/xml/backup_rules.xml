@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-Android-12 backup schema counterpart to data_extraction_rules.xml. Moot in practice since
+     android:allowBackup is false (no backup ever runs), but declared for lint completeness. -->
+<full-backup-content>
+    <exclude domain="sharedpref" />
+    <exclude domain="file" />
+</full-backup-content>

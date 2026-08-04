@@ -1,0 +1,8 @@
+{
+  "sessionId": "sess_001",
+  "actionId": "act_rest_stop",
+  "actionType": "SUGGEST_REST_STOP",
+  "confirmed": true,
+  "confirmationId": "conf_0001",
+  "contextVersion": 124
+}

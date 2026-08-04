@@ -1,0 +1,12 @@
+{
+  "sessionId": "sess_001",
+  "requestId": "req_002",
+  "text": "Tôi đã lái bao nhiêu phút rồi?",
+  "source": "VOICE",
+  "locale": "vi-VN",
+  "clientAttemptOf": null,
+  "context": {
+    "stateVersion": 124,
+    "screen": "assistant"
+  }
+}

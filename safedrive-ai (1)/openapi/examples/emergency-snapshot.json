@@ -1,0 +1,10 @@
+{
+  "emergencyId": "emg_0001",
+  "state": "AWAITING_USER_RESPONSE",
+  "deadlineMs": 1780000015000,
+  "evidence": [
+    { "code": "crash_detected", "label": "Phát hiện va chạm gia tốc lớn", "detectedAtMs": 1780000000000 },
+    { "code": "passenger_no_response", "label": "Không nhận được phản hồi", "detectedAtMs": 1780000000500 }
+  ],
+  "realEmergencyDispatchEnabled": false
+}

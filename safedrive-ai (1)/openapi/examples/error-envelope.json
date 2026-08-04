@@ -1,0 +1,7 @@
+{
+  "code": "TIMEOUT",
+  "message": "Yêu cầu quá thời gian chờ.",
+  "requestId": "req_001",
+  "retryable": true,
+  "serverTimeMs": 1780000000000
+}
