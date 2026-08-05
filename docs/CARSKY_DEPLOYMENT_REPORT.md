@@ -1,15 +1,39 @@
-# SAFEDRIVE — CARSKY DEPLOYMENT, IDENTITY AND RUNTIME REPORT
+# SAFEDRIVE — CARSKY & GCP DEPLOYMENT INTEGRATION REPORT
 
 ---
 
 ## 1. Initial Required Questions
 
 ```text
-1. Did you authenticate as the Haui AVS account?
-YES — evidence/carsky/01_authenticated_haui_avs.png
+1. What is the one authoritative Git SHA?
+22b0480fe74ed1108f903ffc1930b39d8335824b
 
-2. Did SafeDrive actually run on a CarSky AAOS emulator?
-NOT_VERIFIED (CarSky IVI - Android Skycraft container node provisioned & ADB shell connected; SafeDrive APK installation & UI launch on CarSky container pending)
+2. Was the runtime confirmed as AAOS?
+PARTIALLY_VERIFIED (CarSky IVI - Android Skycraft container node provisioned with web ADB terminal access)
+
+3. How was the APK transferred?
+Built locally via `gradlew assembleDebug` (SHA-256: 5C49EC7144E4EE3001B10CBE033A065B9535B7145E61308601E09E15000A99EA); ready for transfer via ADB terminal / signed URL
+
+4. Was SafeDrive installed?
+NOT_VERIFIED (SafeDrive APK installation into CarSky IVI container pending file transfer)
+
+5. Was SafeDrive UI visibly launched?
+NOT_VERIFIED (SafeDrive UI launch in CarSky IVI container pending package install)
+
+6. What GCP project and Cloud Run revision were used?
+GCP Project: `gen-lang-client-0307536353` · Cloud Run Revision: `safedrive-backend-00001-mxt`
+
+7. What is the HTTPS BASE_URL?
+https://safedrive-backend-165374511912.asia-southeast1.run.app/
+
+8. What is the WSS URL?
+wss://safedrive-backend-165374511912.asia-southeast1.run.app/api/v1/assistant/stream_ws
+
+9. Did the request originate from CarSky?
+NOT_VERIFIED (CarSky app installation pending)
+
+10. Did local USB mode remain functional?
+YES (Local USB mode `http://127.0.0.1:8000/` preserved and verified)
 ```
 
 ---
@@ -27,58 +51,46 @@ CARSKY-ORIGINATED BACKEND REQUEST:    NOT_VERIFIED
 CARSKY VEHICLE SIGNAL:                NOT_VERIFIED
 CARSKY ARTIFACT UPLOAD:               NOT_VERIFIED
 CARSKY SUBMISSION:                    NOT_VERIFIED
+GCP CLOUD BACKEND DEPLOYMENT:         VERIFIED
 ```
 
 ---
 
-## 3. Account Identity & Workspace Inspection (Phases 1 & 2)
+## 3. Required Final Status Header
 
-* **Authenticated Account:** `hauiavs@hackathon.fpt.com`
-* **Team Identity:** `Haui AVS`
-* **Workspace / Blueprint:** `Haui AVS-SafeDrive` & `Haui AVS`
-* **CarSky Hostname:** `https://hackathon-2.carsky.io/`
-* **Captured Visual Evidence:**
-  - `evidence/carsky/01_authenticated_haui_avs.png`: Logged-in profile popover confirming team `Haui AVS`.
-  - `evidence/carsky/02_dashboard.png`: CarSky A8 Reborn main dashboard view.
-  - `evidence/carsky/04_workspace.png`: Workspace view with blueprint `Haui AVS-SafeDrive`.
-  - `evidence/carsky/05_aaos_device.png`: Skycraft `IVI - Android` terminal view showing active ADB shell and `screencap` output.
+```text
+GCP BACKEND VERIFIED — CARSKY APP INSTALLATION PENDING
+```
 
 ---
 
-## 4. CarSky Runtime & AAOS Node Capabilities (Phases 3 & 4)
+## 4. Google Cloud Deployment Verification Details
 
-* **Skycraft Blueprint Nodes:** 20 nodes provisioned in Nydus blueprint `Haui AVS`.
-* **Android / IVI Container Node:** Node `IVI - Android` deployed and running.
-* **ADB Shell Interactive Access:**
-  - Connected via browser ADB web terminal on port/session.
-  - Command execution verified: `screencap -p /data/local/tmp/screencap.png` produced valid screenshot (`69,867 bytes`).
-
----
-
-## 5. Disambiguation of Local Execution vs CarSky Runtime
-
-* **Local Workstation Setup:**
-  - Android client running on physical Xiaomi device (`b07e7713`).
-  - FastAPI backend container running on local Docker (`Up 6h (healthy)` on port `8000`).
-  - Local GPU-accelerated Ollama `qwen2.5:7b-instruct-q4_K_M`.
-* **CarSky Cloud Platform Setup:**
-  - Blueprint `Haui AVS-SafeDrive` deployed on CarSky Nydus platform.
-  - `IVI - Android` node running with ADB shell access.
-  - SafeDrive APK installation and end-to-end cloud traffic generation remain pending final upload actions.
+* **GCP Service Deployment:**
+  - Service Name: `safedrive-backend`
+  - Project ID: `gen-lang-client-0307536353`
+  - Region: `asia-southeast1`
+  - HTTPS Endpoint: `https://safedrive-backend-165374511912.asia-southeast1.run.app/`
+  - Verification (`GET /health`): `200 OK` (`status: ok, capabilities: {assistant: true, emergencySimulation: true}`)
 
 ---
 
-## 6. GitHub Synchronization
+## 5. Additive Android Profile & Build Artifacts
 
-* **Repository:** `https://github.com/thagn123/SafeDrive.git`
-* **Branch:** `claude/carsky-deployment`
-* **Commit SHA:** `07a598a46aba3df69ec135ce5baec28602523030`
-* **APK SHA-256:** `1C4F3A56A09ECC61E4ED94D538B3203E0B1EF4B1FA8147822D54A575B17C16CD`
-* **Sanitized Evidence Directory:** `evidence/carsky/` (Raw HTML/tokens sanitized and removed).
+* **Monorepo Commit SHA:** `22b0480fe74ed1108f903ffc1930b39d8335824b`
+* **Branch:** `claude/gcp-carsky-integration`
+* **APK File Location:** `safedrive-ai (1)/android/app/build/outputs/apk/debug/app-debug.apk`
+* **Fresh APK SHA-256 Hash:** `5C49EC7144E4EE3001B10CBE033A065B9535B7145E61308601E09E15000A99EA`
+* **Android Test Suite:** **325 / 325 PASSED** (100%)
 
 ---
 
-## 7. Exact Next User Action
+## 6. Open Blockers
 
-1. Push APK `app-debug.apk` to CarSky `IVI - Android` node via ADB terminal command or CarSky file deployment manager.
-2. Submit team artifacts on `https://hackathon-2.carsky.io/` when submission portal opens.
+* **P0 Blockers:**
+  1. Transfer fresh APK (`5C49EC71...`) to CarSky `IVI - Android` node.
+  2. Install and launch `vn.edu.haui.hvs.safedrive` inside CarSky IVI container.
+  3. Perform live CarSky-to-GCP request and capture Cloud Run access log.
+* **P1 Blockers:**
+  1. CarSky-native VHAL signal mapping.
+  2. Submission form artifact upload.
