@@ -262,7 +262,7 @@ class OllamaNarrator:
             "model": self.model,
             "stream": False,
             "keep_alive": "30m",
-            "options": {"temperature": 0.2, "num_predict": 96, "num_ctx": 1536},
+            "options": {"temperature": 0.2, "num_predict": 128, "num_ctx": 1536},
             "messages": [
                 {
                     "role": "system",
@@ -305,6 +305,15 @@ class OllamaNarrator:
                         "mirrors the already-decided risk level; never choose or soften it yourself.\n"
                         "- Avoid generic filler such as \"hay dam bao an toan\" -- prefer one concrete next "
                         "step.\n"
+                        "- Include every fact and number from APPROVED_REPLY, even ones that feel less "
+                        "central to what the driver asked -- never trim it down to only the part that "
+                        "seems most relevant. When TONE is calm and nothing is wrong, ADD (do not "
+                        "substitute) one brief co-driver remark on top of the complete facts. Compare: "
+                        "flat -- \"Cabin hien o 25 do C, nang luong 74%.\"; co-driver -- \"Cabin hien o 25 "
+                        "do C, mat me, va nang luong van con thoai mai voi 74%.\" -- same facts, same "
+                        "numbers, just warmer wording around them. Never close every reply with the same "
+                        "stock question (e.g. always \"ban co cau hoi gi khac khong\") -- vary it, tie it "
+                        "to what the driver actually asked, or leave it out entirely.\n"
                         "- Repeat every numeric fact or target from APPROVED_REPLY exactly, with its unit."
                     ),
                 },
@@ -390,7 +399,7 @@ class OllamaNarrator:
             "model": self.model,
             "stream": False,
             "keep_alive": "30m",
-            "options": {"temperature": 0.2, "num_predict": 128, "num_ctx": 1536},
+            "options": {"temperature": 0.2, "num_predict": 160, "num_ctx": 1536},
             "messages": [
                 {
                     "role": "system",
@@ -410,7 +419,11 @@ class OllamaNarrator:
                         "you can actually answer.\n"
                         "2. Otherwise, if USER_MESSAGE is genuinely about this vehicle, this trip, or "
                         "driving right now, and it is answerable from GROUNDED_CONTEXT_JSON alone, "
-                        "answer it factually and concisely using only those facts.\n"
+                        "answer it using only those facts -- but sound like an attentive co-driver, not a "
+                        "status readout. Compare: flat -- \"Toc do 61 km/h, cabin 25 do C.\"; co-driver -- "
+                        "\"Xe dang chay 61 km/h rat on dinh, cabin cung mat me o 25 do.\" Say which reading "
+                        "prompted your remark, not a generic phrase. Vary how you close the reply, or leave "
+                        "it without a closing question, instead of always asking the same stock question.\n"
                         "3. Otherwise (general knowledge, math, opinions, anything unrelated to "
                         "driving/vehicle/safety) -- do not attempt to answer it, even if you know the "
                         "answer. Give one brief, honest sentence that SafeDrive is a driving-safety "
@@ -523,7 +536,7 @@ class OllamaNarrator:
         # from a fallback text it may have had no reason to reference at all.
         if (
             not normalized
-            or len(normalized) > 520
+            or len(normalized) > 650
             or not _looks_vietnamese_enough(normalized)
             or (require_approved_numbers and not approved_numbers.issubset(_number_tokens(normalized)))
             or not all(snippet in normalized for snippet in required_verbatim_snippets)
