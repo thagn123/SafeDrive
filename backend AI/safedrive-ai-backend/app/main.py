@@ -17,7 +17,7 @@ from app.core.request_context import RequestContextMiddleware
 from app.ingestion.canonicalizer import Canonicalizer
 from app.ingestion.registry import SignalRegistry
 from app.mobile.emergency_reasoner import EmergencyLLMReasoner
-from app.mobile.llm import OllamaIntentClassifier, OllamaNarrator
+from app.mobile.llm import GeminiNarrator, OllamaIntentClassifier, OllamaNarrator
 from app.mobile.session_store import MobileSessionStore
 from app.mobile.state_bridge import MobileStateBridge
 from app.services.signal_ingestion import SignalIngestionService
@@ -117,26 +117,23 @@ def _publish_services(app: FastAPI, services: core_services.ApplicationServices)
             model=services.settings.llm_model,
             timeout_seconds=services.settings.llm_timeout_seconds,
         )
-        # Same bound as the narrator, not tighter: a cold/idle local Ollama process can
-        # take several seconds just to load the model back into memory (observed ~8.5s
-        # on this machine) before it even starts generating the short label -- an
-        # aggressively tight timeout here would make the very first classification
-        # after an idle period silently no-op, which defeats the point of adding it.
-        # The label generation itself is short (num_predict=12) once the model is warm.
         classifier = OllamaIntentClassifier(
             base_url=services.settings.llm_base_url,
             model=services.settings.llm_model,
             timeout_seconds=services.settings.llm_timeout_seconds,
         )
-        # Deliberately shorter than the narrator's timeout: this sits in the
-        # emergency candidate/escalation path, which the deterministic
-        # SafetyRiskEngine already resolves synchronously as the safety net
-        # (app/mobile/emergency_reasoner.py) -- a slow model must never leave
-        # a second opinion hanging past the 5s VERIFYING_EVIDENCE window.
         reasoner = EmergencyLLMReasoner(
             base_url=services.settings.llm_base_url,
             model=services.settings.llm_model,
             timeout_seconds=min(services.settings.llm_timeout_seconds, 3.0),
+        )
+    elif services.settings.llm_provider in ("gemini", "vertex_ai"):
+        narrator = GeminiNarrator(
+            api_key=services.settings.llm_api_key,
+            model=services.settings.llm_model,
+            timeout_seconds=services.settings.llm_timeout_seconds,
+            project_id=services.settings.gcp_project_id,
+            region=services.settings.gcp_region,
         )
     app.state.mobile_session_store = MobileSessionStore(
         state_bridge=MobileStateBridge(services),

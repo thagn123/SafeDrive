@@ -74,9 +74,17 @@ class Settings(BaseSettings):
         default="INFO",
         description="Logging level",
     )
-    llm_provider: Literal["mock", "ollama"] = Field(
+    llm_provider: Literal["mock", "ollama", "gemini", "vertex_ai"] = Field(
         default="mock",
         description="Optional constrained companion narration provider",
+    )
+    gcp_project_id: str | None = Field(
+        default="gen-lang-client-0307536353",
+        description="GCP Project ID for Vertex AI / Gemini API",
+    )
+    gcp_region: str = Field(
+        default="asia-southeast1",
+        description="GCP Region for Vertex AI",
     )
     llm_model: str = Field(
         default="qwen2.5:7b-instruct-q4_K_M",

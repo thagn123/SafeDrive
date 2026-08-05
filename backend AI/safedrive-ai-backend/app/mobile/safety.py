@@ -108,7 +108,7 @@ class SafetyRiskEngine:
                 rest_message="Hãy xử lý cảnh báo quá nhiệt động cơ trước khi tiếp tục lái xe.",
                 confidence="HIGH",
                 now_ms=now_ms,
-                allowed=("SHOW_WARNING", "SUGGEST_REST_STOP"),
+                allowed=("SHOW_WARNING",),
                 emergency_candidate=False,
             )
 
@@ -127,7 +127,7 @@ class SafetyRiskEngine:
                 rest_message="Hãy xử lý cảnh báo nhiệt độ động cơ trước khi tiếp tục lái xe.",
                 confidence="HIGH",
                 now_ms=now_ms,
-                allowed=("SHOW_WARNING", "SUGGEST_REST_STOP"),
+                allowed=("SHOW_WARNING",),
                 emergency_candidate=False,
             )
 

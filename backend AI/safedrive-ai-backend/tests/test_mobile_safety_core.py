@@ -119,7 +119,8 @@ def test_engine_temperature_at_warning_threshold_is_high_risk() -> None:
     assert result.risk.level == "HIGH"
     assert result.risk.reasonCodes == ["engine_overheat_warning"]
     assert "108" in result.risk.message
-    assert result.allowed_action_types == ("SHOW_WARNING", "SUGGEST_REST_STOP")
+    assert result.allowed_action_types == ("SHOW_WARNING",)
+    assert "SUGGEST_REST_STOP" not in result.allowed_action_types
 
 
 def test_engine_temperature_at_critical_threshold_is_critical_but_not_an_emergency_candidate() -> None:
