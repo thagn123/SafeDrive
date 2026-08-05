@@ -50,15 +50,33 @@ data class SettingsUiState(
     val lastLlmUsed: Boolean? = null,
     val lastFallback: Boolean = false,
     val lastFallbackReason: String? = null,
+    /** Raw "provider/model" string from ChatMessage.model, e.g. "vertex_ai/gemini-2.5-flash" or
+     * "ollama/qwen2.5:7b-instruct-q4_K_M" -- read directly from the backend, never guessed, so
+     * Settings can name the actual provider that answered instead of assuming Ollama. */
+    val lastModel: String? = null,
 )
 
-/** "Ollama" only when the last reply both used an LLM and wasn't a fallback; "Deterministic
- * fallback" when a route is deterministic by design (never attempted) *or* an LLM attempt failed
- * -- both cases mean the driver saw a non-LLM reply, so Settings deliberately does not
- * distinguish them further here. "Unknown" only before any reply has been received. */
-fun llmStatusLabel(lastLlmUsed: Boolean?, lastFallback: Boolean): String = when {
+private val providerDisplayNames = mapOf(
+    "ollama" to "Ollama",
+    "gemini" to "Gemini",
+    "vertex_ai" to "Vertex AI",
+)
+
+/** Names the real provider/model that produced the last reply when one used an LLM and wasn't
+ * a fallback; "Deterministic fallback" when a route is deterministic by design (never attempted)
+ * *or* an LLM attempt failed -- both cases mean the driver saw a non-LLM reply, so Settings
+ * deliberately does not distinguish them further here. "Unknown" only before any reply has been
+ * received. Never hardcodes a specific provider name: [lastModel] is read verbatim from the
+ * backend response, so a new provider is labeled correctly without an app update. */
+fun llmStatusLabel(lastLlmUsed: Boolean?, lastFallback: Boolean, lastModel: String? = null): String = when {
     lastLlmUsed == null -> "Chưa rõ (chưa có phản hồi nào)"
-    lastLlmUsed && !lastFallback -> "Ollama"
+    lastLlmUsed && !lastFallback -> {
+        val parts = lastModel?.split("/", limit = 2)
+        val provider = parts?.getOrNull(0)
+        val model = parts?.getOrNull(1)
+        val providerLabel = provider?.let { providerDisplayNames[it] ?: it } ?: "AI"
+        if (model != null) "$providerLabel ($model)" else providerLabel
+    }
     else -> "Deterministic fallback"
 }
 

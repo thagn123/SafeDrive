@@ -285,11 +285,12 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenSimulator: () -> Unit) {
                             modifier = Modifier.padding(top = 8.dp),
                         )
                     }
-                    // From the last SAFEDRIVE reply's explicit llmUsed/fallback fields only -- never
-                    // parsed out of the developer-only `model` string, and never shown on the normal
-                    // Cockpit/Assistant screens (developer/settings surface only).
+                    // Provider/model naming is read verbatim from the last SAFEDRIVE reply's `model`
+                    // field for display only -- llmUsed/fallback (not this string) still decide status,
+                    // and this is never shown on the normal Cockpit/Assistant screens (developer/settings
+                    // surface only).
                     Text(
-                        "LLM: ${llmStatusLabel(state.lastLlmUsed, state.lastFallback)}",
+                        "LLM: ${llmStatusLabel(state.lastLlmUsed, state.lastFallback, state.lastModel)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceMuted,
                         modifier = Modifier.padding(top = 8.dp),

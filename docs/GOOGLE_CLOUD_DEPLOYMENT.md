@@ -51,7 +51,11 @@ Android app settings supports additive profiles without overwriting existing loc
 - `Emulator`: `http://10.0.2.2:8000/`
 - `LAN Wi-Fi`: `http://192.168.1.15:8000/`
 - `GCP Cloud`: `https://safedrive-backend-165374511912.asia-southeast1.run.app/`
-- `Cloud Staging`: `https://api.example.com/`
+- `Custom URL`: any HTTPS endpoint the user enters manually
+
+(Verified against `app/src/main/.../feature/settings/SettingsUiState.kt`'s `baseUrlPresets`: there
+is no shipped "Cloud Staging" preset or `api.example.com` placeholder in the app itself -- an
+earlier draft of this document incorrectly listed one.)
 
 ---
 

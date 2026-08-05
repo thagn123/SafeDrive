@@ -91,6 +91,7 @@ class SettingsViewModel(
             lastLlmUsed = lastSafeDriveMessage?.llmUsed,
             lastFallback = lastSafeDriveMessage?.fallback ?: false,
             lastFallbackReason = lastSafeDriveMessage?.fallbackReason,
+            lastModel = lastSafeDriveMessage?.model,
         )
     }.stateIn(
         scope = viewModelScope,

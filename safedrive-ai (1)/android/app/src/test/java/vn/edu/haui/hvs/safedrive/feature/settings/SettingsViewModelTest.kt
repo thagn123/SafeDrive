@@ -84,8 +84,14 @@ class SettingsViewModelTest {
             advanceUntilIdle()
 
             assertThat(viewModel.uiState.value.lastLlmUsed).isTrue()
-            assertThat(llmStatusLabel(viewModel.uiState.value.lastLlmUsed, viewModel.uiState.value.lastFallback))
-                .isEqualTo("Ollama")
+            assertThat(viewModel.uiState.value.lastModel).isEqualTo("ollama/qwen2.5:7b-instruct-q4_K_M")
+            assertThat(
+                llmStatusLabel(
+                    viewModel.uiState.value.lastLlmUsed,
+                    viewModel.uiState.value.lastFallback,
+                    viewModel.uiState.value.lastModel,
+                ),
+            ).isEqualTo("Ollama (qwen2.5:7b-instruct-q4_K_M)")
 
             conversation.value = conversation.value.copy(
                 messages = conversation.value.messages + vn.edu.haui.hvs.safedrive.core.model.ChatMessage(
