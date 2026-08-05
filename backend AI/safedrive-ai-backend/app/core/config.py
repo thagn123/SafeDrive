@@ -5,7 +5,19 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SIGNAL_REGISTRY_PATH = PROJECT_ROOT / "configs" / "signal_registry.yaml"
+
+def _find_default_signal_registry() -> Path:
+    candidates = [
+        PROJECT_ROOT / "configs" / "signal_registry.yaml",
+        Path.cwd() / "configs" / "signal_registry.yaml",
+        Path("/app/configs/signal_registry.yaml"),
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+DEFAULT_SIGNAL_REGISTRY_PATH = _find_default_signal_registry()
 
 FORBIDDEN_SECRET_PLACEHOLDERS = {
     "safedrive-default-api-key-placeholder",
