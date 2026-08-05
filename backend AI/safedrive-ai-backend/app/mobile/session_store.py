@@ -577,7 +577,7 @@ class MobileSessionStore:
                 ),
                 "serverTimeMs": completed_at,
                 "serverProcessingMs": completed_at - started_at,
-                "model": f"ollama/{self._narrator.model}",
+                "model": f"{self._narrator.provider_name}/{self._narrator.model}",
                 "llmUsed": True,
             }
         )

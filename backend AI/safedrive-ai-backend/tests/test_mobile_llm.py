@@ -860,3 +860,178 @@ async def test_vertex_ai_narrator_returns_none_when_credentials_unreachable(monk
     result = await narrator.rewrite_grounded_reply(**narration_kwargs())
     assert result is None
 
+
+def _adc_ok():
+    async def fake_get(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        if "metadata.google.internal" in url:
+            return httpx.Response(
+                200, json={"access_token": "fake-adc-token"}, request=httpx.Request("GET", url)
+            )
+        return httpx.Response(404, request=httpx.Request("GET", url))
+
+    return fake_get
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_returns_none_on_403_permission_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            403,
+            json={"error": {"code": 403, "status": "PERMISSION_DENIED"}},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _adc_ok())
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_returns_none_on_429_quota_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={"error": {"code": 429, "status": "RESOURCE_EXHAUSTED"}},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _adc_ok())
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_returns_none_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _adc_ok())
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_returns_none_on_empty_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        return httpx.Response(200, json={"candidates": []}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _adc_ok())
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_returns_none_on_malformed_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        return httpx.Response(200, content=b"not json", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _adc_ok())
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_falls_back_to_api_key_when_adc_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the Cloud Run metadata server is unreachable (e.g. running outside GCP), a
+    configured api_key must still be usable as a fallback path to the Developer API."""
+
+    captured_url: dict[str, str] = {}
+
+    async def fake_get(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        raise httpx.ConnectError("Metadata server unreachable")
+
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        captured_url["url"] = url
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "Cabin hiện ở 31 độ C, năng lượng 18%."}]}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(api_key="fallback-key", project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result == "Cabin hiện ở 31 độ C, năng lượng 18%."
+    assert "generativelanguage.googleapis.com" in captured_url["url"]
+    assert "key=fallback-key" in captured_url["url"]
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_rejects_a_hallucinated_number_not_in_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "Cabin hiện ở 99 độ C, năng lượng 18%."}]}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _adc_ok())
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_disables_thinking_budget_to_avoid_truncation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirmed live against the real Vertex AI endpoint: gemini-2.5-flash's extended
+    "thinking" tokens consume maxOutputTokens before any visible text is produced unless
+    thinkingBudget is explicitly set to 0 (finishReason=MAX_TOKENS with 246/256 tokens
+    spent on invisible thinking, leaving a truncated 6-token reply). This narrator only
+    rephrases an already-decided fact set, so no extended reasoning is needed."""
+
+    captured_payload: dict[str, object] = {}
+
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        captured_payload.update(kwargs.get("json", {}))
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "Cabin hiện ở 31 độ C, năng lượng 18%."}]}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", _adc_ok())
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert captured_payload["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+def test_narrator_provider_names_are_distinct_and_used_in_response_model_label() -> None:
+    assert OllamaNarrator("http://x", "m", 1.0).provider_name == "ollama"
+    assert GeminiNarrator(api_key=None).provider_name == "gemini"
+    assert VertexAINarrator().provider_name == "vertex_ai"
+

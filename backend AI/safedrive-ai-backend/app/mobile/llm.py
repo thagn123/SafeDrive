@@ -13,7 +13,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -217,6 +217,8 @@ def _bare_context_numbers(
 @dataclass(frozen=True, slots=True)
 class OllamaNarrator:
     """Uses a local Ollama model only to narrate an already-approved plan."""
+
+    provider_name: ClassVar[str] = "ollama"
 
     base_url: str
     model: str
@@ -553,8 +555,10 @@ class OllamaNarrator:
 class GeminiNarrator:
     """Uses Google Gemini / Vertex AI REST API for constrained companion narration."""
 
+    provider_name: ClassVar[str] = "gemini"
+
     api_key: str | None
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-2.5-flash"
     timeout_seconds: float = 15.0
     project_id: str | None = "gen-lang-client-0307536353"
     region: str = "asia-southeast1"
@@ -680,7 +684,7 @@ class GeminiNarrator:
         )
 
     async def _post_gemini(self, system_instruction: str, user_prompt: str) -> str | None:
-        model_name = self.model if "/" not in self.model else "gemini-2.0-flash"
+        model_name = self.model if "/" not in self.model else "gemini-2.5-flash"
         api_key_str = self.api_key.get_secret_value() if hasattr(self.api_key, "get_secret_value") and self.api_key else (self.api_key or "")
         if api_key_str:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key_str}"
@@ -690,7 +694,18 @@ class GeminiNarrator:
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction}]},
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 256},
+            # thinkingBudget=0 disables Gemini 2.5's extended "thinking" tokens, which
+            # otherwise consume maxOutputTokens before any visible text is produced --
+            # confirmed live: with thinking enabled, a 256-token budget returned
+            # finishReason=MAX_TOKENS after 246 thinking tokens and 6 truncated visible
+            # tokens ("Xe chay 50 km"); disabling it returns finishReason=STOP with the
+            # full reply. This narrator only rephrases an already-decided fact set, so no
+            # extended reasoning is needed.
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 256,
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
         }
 
         try:
@@ -713,8 +728,10 @@ class VertexAINarrator:
     or Service Account identity for constrained companion narration.
     """
 
+    provider_name: ClassVar[str] = "vertex_ai"
+
     api_key: str | None = None
-    model: str = "gemini-1.5-flash"
+    model: str = "gemini-2.5-flash"
     timeout_seconds: float = 15.0
     project_id: str = "gen-lang-client-0307536353"
     region: str = "asia-southeast1"
@@ -840,7 +857,7 @@ class VertexAINarrator:
         )
 
     async def _post_vertex(self, system_instruction: str, user_prompt: str) -> str | None:
-        model_name = self.model if "/" not in self.model else "gemini-1.5-flash"
+        model_name = self.model if "/" not in self.model else "gemini-2.5-flash"
         api_key_str = (
             self.api_key.get_secret_value()
             if hasattr(self.api_key, "get_secret_value") and self.api_key
@@ -850,7 +867,18 @@ class VertexAINarrator:
         payload = {
             "system_instruction": {"parts": [{"text": system_instruction}]},
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 256},
+            # thinkingBudget=0 disables Gemini 2.5's extended "thinking" tokens, which
+            # otherwise consume maxOutputTokens before any visible text is produced --
+            # confirmed live: with thinking enabled, a 256-token budget returned
+            # finishReason=MAX_TOKENS after 246 thinking tokens and 6 truncated visible
+            # tokens ("Xe chay 50 km"); disabling it returns finishReason=STOP with the
+            # full reply. This narrator only rephrases an already-decided fact set, so no
+            # extended reasoning is needed.
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 256,
+                "thinkingConfig": {"thinkingBudget": 0},
+            },
         }
 
         try:
