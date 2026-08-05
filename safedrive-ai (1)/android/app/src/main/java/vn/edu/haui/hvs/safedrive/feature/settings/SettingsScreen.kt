@@ -6,6 +6,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -197,9 +199,14 @@ fun SettingsScreen(viewModel: SettingsViewModel, onOpenSimulator: () -> Unit) {
                         isError = state.baseUrlError != null,
                         supportingText = state.baseUrlError?.let { { Text(it) } },
                     )
+                    // horizontalScroll rather than a plain Row: a plain Row silently clips any
+                    // preset that doesn't fit the screen width instead of wrapping or scrolling
+                    // to it -- confirmed live on a Xiaomi where the 4th preset (GCP Cloud) was
+                    // present in baseUrlPresets but invisible and untappable on-screen.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
                             .padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
