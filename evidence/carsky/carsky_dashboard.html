@@ -1,0 +1,137 @@
+<!--
+    Copyright © 2025-2026 FPT Automotive
+
+    All rights reserved.
+
+    This software and associated documentation files (the "Software") are the exclusive property of FPT Automotive.
+
+    Permission to use, copy, modify, merge, publish, distribute, sublicense, or sell copies of the Software is prohibited without prior written permission from FPT Automotive.
+
+    Any unauthorized use of this Software is strictly prohibited and may result in legal action.
+
+    For licensing inquiries, please contact: contacts@fpt.auto
+-->
+
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>A8 Reborn - Rework</title>
+        <link rel="icon" type="image/png" href="/favicon.png" />
+
+        <style>
+            #splash-screen {
+                position: fixed;
+                inset: 0;
+                display: none; /* Hide by default */
+                justify-content: center;
+                align-items: center;
+                background: white;
+                z-index: 9999;
+                color: #333;
+                font-family: sans-serif;
+                font-size: 1.2rem;
+                text-align: center;
+                padding: 2rem;
+                transition: opacity 0.3s ease;
+            }
+
+            #splash-text {
+                position: relative;
+                overflow: hidden;
+            }
+
+            #splash-text::after {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: -100%;
+                width: 50%;
+                height: 100%;
+                background: linear-gradient(
+                    90deg,
+                    rgba(255, 255, 255, 0) 0%,
+                    rgba(255, 255, 255, 0.8) 50%,
+                    rgba(255, 255, 255, 0) 100%
+                );
+                animation: shineEffect 1s infinite;
+            }
+
+            @keyframes shineEffect {
+                0% {
+                    left: -100%;
+                }
+                100% {
+                    left: 200%;
+                }
+            }
+
+            #app-wrapper {
+                display: block; /* Show content by default */
+            }
+        </style>
+
+        <script>
+            // Only show splash for root path
+            document.addEventListener('DOMContentLoaded', () => {
+                const isRootPath = window.location.pathname === '/'
+
+                // Set splash start time
+                window.__splashStart = performance.now()
+
+                if (isRootPath) {
+                    // Show splash and hide content for root path
+                    const splash = document.getElementById('splash-screen')
+                    const wrapper = document.getElementById('app-wrapper')
+
+                    if (splash && wrapper) {
+                        splash.style.display = 'flex'
+                        wrapper.style.display = 'none'
+                    }
+
+                    // Initialize splash content
+                    const sentences = [
+                        'Booting Reality…',
+                        'Your Lab, Orbited.',
+                        'Devices. Data. Done.',
+                        'World-Wide. Wire-Tight.',
+                        'Code → Drive → Repeat.',
+                        'Dial In. Drill Down.',
+                        'Turn the Key to Anywhere.',
+                    ]
+
+                    const splashText = document.getElementById('splash-text')
+                    if (splashText) {
+                        const randomSentence =
+                            sentences[Math.floor(Math.random() * sentences.length)]
+                        splashText.textContent = randomSentence
+                    }
+                }
+            })
+        </script>
+      <script type="module" crossorigin src="/assets/main-CJ1wntt4.js"></script>
+      <link rel="modulepreload" crossorigin href="/assets/vendor-B_LW24Wm.js">
+      <link rel="modulepreload" crossorigin href="/assets/dockview-BLYEYHcq.js">
+      <link rel="modulepreload" crossorigin href="/assets/icons-Gig0xLoX.js">
+      <link rel="modulepreload" crossorigin href="/assets/sonner-B_7toCzF.js">
+      <link rel="modulepreload" crossorigin href="/assets/floating-ui-BV8iGD7x.js">
+      <link rel="modulepreload" crossorigin href="/assets/zero-CrTo6E0O.js">
+      <link rel="modulepreload" crossorigin href="/assets/database-D2moJoz7.js">
+      <link rel="modulepreload" crossorigin href="/assets/fw-C0_oeAN5.js">
+      <link rel="modulepreload" crossorigin href="/assets/hls-DNOIHUy-.js">
+      <link rel="stylesheet" crossorigin href="/assets/vendor-TiX540oy.css">
+      <link rel="stylesheet" crossorigin href="/assets/dockview-BWKo0VjO.css">
+      <link rel="stylesheet" crossorigin href="/assets/sonner-rN8r_Hzv.css">
+      <link rel="stylesheet" crossorigin href="/assets/main-DNB8N34e.css">
+    </head>
+    <body>
+        <div id="splash-screen">
+            <div id="splash-text"></div>
+        </div>
+
+        <div id="app-wrapper">
+            <div id="app"></div>
+        </div>
+    </body>
+</html>
