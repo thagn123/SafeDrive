@@ -24,7 +24,6 @@ val baseUrlPresets = listOf(
     BaseUrlPreset("Emulator", "http://10.0.2.2:8000/"),
     BaseUrlPreset("LAN Wi-Fi", "http://192.168.1.15:8000/"),
     BaseUrlPreset("GCP Cloud", "https://safedrive-backend-165374511912.asia-southeast1.run.app/"),
-    BaseUrlPreset("Cloud Staging", "https://api.example.com/"),
 )
 
 /**

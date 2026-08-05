@@ -10,7 +10,7 @@
 * **Cloud Run Revision:** `safedrive-backend-00001-mxt`
 * **Artifact Registry Repository:** `asia-southeast1-docker.pkg.dev/gen-lang-client-0307536353/cloud-run-source-deploy/safedrive-backend`
 * **HTTPS BASE_URL:** `https://safedrive-backend-165374511912.asia-southeast1.run.app/`
-* **WSS Assistant URL:** `wss://safedrive-backend-165374511912.asia-southeast1.run.app/api/v1/assistant/stream_ws`
+* **WSS Assistant URL:** `wss://safedrive-backend-165374511912.asia-southeast1.run.app/api/v1/ws/assistant`
 * **Service Configuration:**
   - **Memory:** 1 GiB
   - **CPU:** 1 vCPU
