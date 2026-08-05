@@ -20,9 +20,10 @@ sealed interface BaseUrlSaveState {
 data class BaseUrlPreset(val label: String, val url: String)
 
 val baseUrlPresets = listOf(
-    BaseUrlPreset("USB Local", "http://127.0.0.1:8002/"),
-    BaseUrlPreset("Emulator", "http://10.0.2.2:8002/"),
-    BaseUrlPreset("LAN Wi-Fi", "http://192.168.1.15:8002/"),
+    BaseUrlPreset("USB Local", "http://127.0.0.1:8000/"),
+    BaseUrlPreset("Emulator", "http://10.0.2.2:8000/"),
+    BaseUrlPreset("LAN Wi-Fi", "http://192.168.1.15:8000/"),
+    BaseUrlPreset("GCP Cloud", "https://safedrive-backend-165374511912.asia-southeast1.run.app/"),
     BaseUrlPreset("Cloud Staging", "https://api.example.com/"),
 )
 
