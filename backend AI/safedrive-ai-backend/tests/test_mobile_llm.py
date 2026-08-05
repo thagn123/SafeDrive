@@ -2,7 +2,13 @@ import httpx
 import pytest
 
 from app.mobile.context import ContextPack, ContextValue
-from app.mobile.llm import OllamaIntentClassifier, OllamaNarrator, _looks_vietnamese_enough
+from app.mobile.llm import (
+    GeminiNarrator,
+    OllamaIntentClassifier,
+    OllamaNarrator,
+    VertexAINarrator,
+    _looks_vietnamese_enough,
+)
 
 
 def test_looks_vietnamese_enough_accepts_diacritic_text() -> None:
@@ -785,3 +791,72 @@ async def test_ollama_intent_classifier_receives_structured_context_not_free_tex
     prompt = captured["messages"][1]["content"]  # type: ignore[index]
     assert '"name":"vehicle.cabin_temperature_c","value":31.0' in prompt
     assert '"risk":{"level":"MEDIUM","reasonCodes":["hot_cabin"]}' in prompt
+
+
+@pytest.mark.asyncio
+async def test_gemini_narrator_accepts_valid_grounded_rewrite(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        assert "generativelanguage.googleapis.com" in url
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "Cabin hiện ở 31 độ C, năng lượng 18%."}]}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = GeminiNarrator(api_key="test-api-key", model="gemini-2.0-flash")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result == "Cabin hiện ở 31 độ C, năng lượng 18%."
+
+
+@pytest.mark.asyncio
+async def test_gemini_narrator_returns_none_on_http_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        return httpx.Response(403, json={"error": "Permission Denied"}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = GeminiNarrator(api_key="invalid-key")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_uses_gcp_metadata_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_auth: dict[str, str] = {}
+
+    async def fake_get(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        if "metadata.google.internal" in url:
+            return httpx.Response(200, json={"access_token": "fake-adc-token-123"}, request=httpx.Request("GET", url))
+        return httpx.Response(404, request=httpx.Request("GET", url))
+
+    async def fake_post(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        headers = kwargs.get("headers", {})
+        captured_auth["auth"] = headers.get("Authorization", "")
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"text": "Cabin hiện ở 31 độ C, năng lượng 18%."}]}}]},
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = VertexAINarrator(project_id="test-proj", region="asia-southeast1")
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result == "Cabin hiện ở 31 độ C, năng lượng 18%."
+    assert captured_auth["auth"] == "Bearer fake-adc-token-123"
+
+
+@pytest.mark.asyncio
+async def test_vertex_ai_narrator_returns_none_when_credentials_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_get(self: httpx.AsyncClient, url: str, *args: object, **kwargs: object) -> httpx.Response:
+        raise httpx.ConnectError("Metadata server unreachable")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    narrator = VertexAINarrator(api_key=None)
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+    assert result is None
+

@@ -702,8 +702,196 @@ class GeminiNarrator:
                 parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
                 if parts and "text" in parts[0]:
                     return parts[0]["text"]
-        except Exception:
+        except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError):
             return None
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class VertexAINarrator:
+    """Uses Google Cloud Vertex AI REST API with Application Default Credentials (ADC)
+    or Service Account identity for constrained companion narration.
+    """
+
+    api_key: str | None = None
+    model: str = "gemini-1.5-flash"
+    timeout_seconds: float = 15.0
+    project_id: str = "gen-lang-client-0307536353"
+    region: str = "asia-southeast1"
+
+    async def rewrite_grounded_reply(
+        self,
+        *,
+        user_text: str,
+        approved_reply: str,
+        context_pack: ContextPack,
+        risk_level: str,
+        risk_reasons: tuple[str, ...],
+        allowed_actions: list[dict[str, object]],
+        required_verbatim_snippets: tuple[str, ...] = (),
+    ) -> str | None:
+        context_json = json.dumps(
+            {
+                "stateVersion": context_pack.state_version,
+                "values": [
+                    {
+                        "name": value.name,
+                        "value": value.value,
+                        "source": value.source,
+                        "ageMs": value.age_ms,
+                        "status": value.status,
+                    }
+                    for value in context_pack.values
+                ],
+                "missingContext": list(context_pack.missing_context),
+                "constraints": list(context_pack.constraints),
+                "risk": {"level": risk_level, "reasonCodes": list(risk_reasons)},
+                "allowedActions": allowed_actions,
+            },
+            ensure_ascii=False,
+            default=_json_default,
+            separators=(",", ":"),
+        )
+        tone = _tone_for_risk(risk_level)
+        system_instruction = (
+            "ROLE: You are the in-vehicle response narrator for SafeDrive, the AI companion riding "
+            "along with the driver -- not a generic chatbot. You transform verified vehicle context "
+            "and an already-decided safety judgment into concise, natural Vietnamese guidance. The "
+            "deterministic safety system has already made every decision; your only job is "
+            "language, not judgment.\n\n"
+            "PRIORITIES, in order:\n"
+            "1. Preserve the deterministic decision -- APPROVED_REPLY is the fixed, already-safe "
+            "content: preserve every safety warning, vehicle fact, action type, and confirmation "
+            "requirement in it exactly, with the same numbers and units.\n"
+            "2. Use only supplied verified context (APPROVED_REPLY and GROUNDED_CONTEXT_JSON).\n"
+            "STYLE:\n"
+            "- Vietnamese by default, one to four short sentences a driver can absorb at a glance.\n"
+            "- Natural spoken language suitable for text-to-speech: no markdown, no raw reason codes."
+        )
+        user_prompt = (
+            f"TONE:\n{tone}\n\n"
+            f"USER_MESSAGE:\n{user_text}\n\n"
+            f"APPROVED_REPLY:\n{approved_reply}\n\n"
+            f"GROUNDED_CONTEXT_JSON:\n{context_json}\n\n"
+            "Return only the Vietnamese user-facing reply."
+        )
+        raw_text = await self._post_vertex(system_instruction, user_prompt)
+        if raw_text is None:
+            return None
+        return OllamaNarrator._validate_and_normalize(
+            raw_text,
+            approved_reply=approved_reply,
+            context_pack=context_pack,
+            allowed_actions=tuple(allowed_actions),
+            required_verbatim_snippets=required_verbatim_snippets,
+        )
+
+    async def answer_open_query(
+        self,
+        *,
+        user_text: str,
+        deterministic_fallback: str,
+        context_pack: ContextPack,
+        risk_level: str,
+        risk_reasons: tuple[str, ...],
+    ) -> str | None:
+        context_json = json.dumps(
+            {
+                "stateVersion": context_pack.state_version,
+                "values": [
+                    {
+                        "name": value.name,
+                        "value": value.value,
+                        "source": value.source,
+                        "ageMs": value.age_ms,
+                        "status": value.status,
+                    }
+                    for value in context_pack.values
+                ],
+                "missingContext": list(context_pack.missing_context),
+                "constraints": list(context_pack.constraints),
+                "risk": {"level": risk_level, "reasonCodes": list(risk_reasons)},
+            },
+            ensure_ascii=False,
+            default=_json_default,
+            separators=(",", ":"),
+        )
+        tone = _tone_for_risk(risk_level)
+        system_instruction = (
+            "ROLE: You are the in-vehicle assistant for SafeDrive, a driving-safety "
+            "companion riding along with the driver -- not a general-purpose chatbot. "
+            "Read USER_MESSAGE and respond directly in natural Vietnamese using GROUNDED_CONTEXT_JSON."
+        )
+        user_prompt = (
+            f"TONE:\n{tone}\n\n"
+            f"USER_MESSAGE:\n{user_text}\n\n"
+            f"DETERMINISTIC_FALLBACK:\n{deterministic_fallback}\n\n"
+            f"GROUNDED_CONTEXT_JSON:\n{context_json}\n\n"
+            "Return only the Vietnamese user-facing reply."
+        )
+        raw_text = await self._post_vertex(system_instruction, user_prompt)
+        if raw_text is None:
+            return None
+        return OllamaNarrator._validate_and_normalize(
+            raw_text,
+            approved_reply=deterministic_fallback,
+            context_pack=context_pack,
+            require_approved_numbers=False,
+        )
+
+    async def _post_vertex(self, system_instruction: str, user_prompt: str) -> str | None:
+        model_name = self.model if "/" not in self.model else "gemini-1.5-flash"
+        api_key_str = (
+            self.api_key.get_secret_value()
+            if hasattr(self.api_key, "get_secret_value") and self.api_key
+            else (self.api_key or "")
+        )
+
+        payload = {
+            "system_instruction": {"parts": [{"text": system_instruction}]},
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 256},
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                headers = {"Content-Type": "application/json"}
+                # 1. Attempt Cloud Run ADC metadata token authentication
+                token = await self._fetch_gcp_metadata_token(client)
+                if token:
+                    url = (
+                        f"https://{self.region}-aiplatform.googleapis.com/v1/projects/"
+                        f"{self.project_id}/locations/{self.region}/publishers/google/models/{model_name}:generateContent"
+                    )
+                    headers["Authorization"] = f"Bearer {token}"
+                elif api_key_str:
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key_str}"
+                else:
+                    return None
+
+                res = await client.post(url, json=payload, headers=headers)
+                if res.status_code != 200:
+                    return None
+                data = res.json()
+                parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
+                if parts and "text" in parts[0]:
+                    return parts[0]["text"]
+        except (httpx.HTTPError, KeyError, IndexError, json.JSONDecodeError):
+            return None
+        return None
+
+    @staticmethod
+    async def _fetch_gcp_metadata_token(client: httpx.AsyncClient) -> str | None:
+        try:
+            res = await client.get(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+                headers={"Metadata-Flavor": "Google"},
+                timeout=2.0,
+            )
+            if res.status_code == 200:
+                return res.json().get("access_token")
+        except (httpx.HTTPError, KeyError, json.JSONDecodeError):
+            pass
         return None
 
 

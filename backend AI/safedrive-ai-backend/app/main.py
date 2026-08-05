@@ -17,7 +17,7 @@ from app.core.request_context import RequestContextMiddleware
 from app.ingestion.canonicalizer import Canonicalizer
 from app.ingestion.registry import SignalRegistry
 from app.mobile.emergency_reasoner import EmergencyLLMReasoner
-from app.mobile.llm import GeminiNarrator, OllamaIntentClassifier, OllamaNarrator
+from app.mobile.llm import GeminiNarrator, OllamaIntentClassifier, OllamaNarrator, VertexAINarrator
 from app.mobile.session_store import MobileSessionStore
 from app.mobile.state_bridge import MobileStateBridge
 from app.services.signal_ingestion import SignalIngestionService
@@ -127,12 +127,20 @@ def _publish_services(app: FastAPI, services: core_services.ApplicationServices)
             model=services.settings.llm_model,
             timeout_seconds=min(services.settings.llm_timeout_seconds, 3.0),
         )
-    elif services.settings.llm_provider in ("gemini", "vertex_ai"):
+    elif services.settings.llm_provider == "gemini":
         narrator = GeminiNarrator(
             api_key=services.settings.llm_api_key,
             model=services.settings.llm_model,
             timeout_seconds=services.settings.llm_timeout_seconds,
             project_id=services.settings.gcp_project_id,
+            region=services.settings.gcp_region,
+        )
+    elif services.settings.llm_provider == "vertex_ai":
+        narrator = VertexAINarrator(
+            api_key=services.settings.llm_api_key,
+            model=services.settings.llm_model,
+            timeout_seconds=services.settings.llm_timeout_seconds,
+            project_id=services.settings.gcp_project_id or "gen-lang-client-0307536353",
             region=services.settings.gcp_region,
         )
     app.state.mobile_session_store = MobileSessionStore(
