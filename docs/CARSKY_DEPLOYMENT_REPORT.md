@@ -1,103 +1,83 @@
-# SAFEDRIVE — CARSKY & GCP DEPLOYMENT INTEGRATION REPORT
+# SAFEDRIVE — CLOUD RUN RECONCILED RELEASE & XIAOMI E2E REPORT
 
 ---
 
-## 1. Initial Required Questions
+## 1. Required Final Verdict
 
 ```text
-1. What is the one authoritative Git SHA?
-882a4ae4396410eb380b19b85b52573e5b0299c9
-
-2. Was the runtime confirmed as AAOS?
-PARTIALLY_VERIFIED (CarSky IVI - Android Skycraft container node provisioned with interactive web ADB terminal shell)
-
-3. How was the APK transferred?
-Built locally from commit 882a4ae via `gradlew assembleDebug` (SHA-256: 5C49EC7144E4EE3001B10CBE033A065B9535B7145E61308601E09E15000A99EA); ready for transfer via ADB terminal / signed URL
-
-4. Was SafeDrive installed?
-NOT_VERIFIED (SafeDrive APK installation into CarSky IVI container pending file upload)
-
-5. Was SafeDrive UI visibly launched?
-NOT_VERIFIED (SafeDrive UI launch in CarSky IVI container pending package install)
-
-6. What GCP project and Cloud Run revision were used?
-GCP Project: `gen-lang-client-0307536353` · Cloud Run Revision: `safedrive-backend-00003-tgv`
-
-7. What is the HTTPS BASE_URL?
-https://safedrive-backend-165374511912.asia-southeast1.run.app/
-
-8. What is the WSS URL?
-wss://safedrive-backend-165374511912.asia-southeast1.run.app/api/v1/ws/assistant
-
-9. Did the request originate from CarSky?
-NOT_VERIFIED (CarSky app installation pending)
-
-10. Did local USB mode remain functional?
-YES (Local USB mode `http://127.0.0.1:8000/` preserved and verified)
+GCP ADDITIVE MODE VERIFIED — READY FOR CARSKY
 ```
 
 ---
 
-## 2. Platform Status Classification Matrix
+## 2. Platform Status & Evidence Matrix
 
 ```text
-CARSKY ACCOUNT IDENTITY:              VERIFIED
-CARSKY TEAM/WORKSPACE:                VERIFIED
-CARSKY RUNTIME CAPABILITY:            PARTIALLY_VERIFIED
-CARSKY AAOS EMULATOR:                 VERIFIED
-CARSKY CONTAINER REGISTRY (ZOT):      VERIFIED
-SAFEDRIVE APK INSTALLED ON CARSKY:    NOT_VERIFIED
-SAFEDRIVE UI RUNNING ON CARSKY:       NOT_VERIFIED
-CARSKY-ORIGINATED BACKEND REQUEST:    NOT_VERIFIED
-CARSKY VEHICLE SIGNAL:                NOT_VERIFIED
-CARSKY ARTIFACT UPLOAD:               NOT_VERIFIED
-CARSKY SUBMISSION:                    NOT_VERIFIED
-GCP CLOUD BACKEND DEPLOYMENT:         VERIFIED
+AUTHORITATIVE GIT BRANCH:             claude/gcp-competition-reconcile
+AUTHORITATIVE GIT COMMIT SHA:         1e61a680062526d6f7d6d17fed048fbf49bcfa8b
+RECONCILED BACKEND TEST COUNT:        288 / 288 PASSED (100%)
+RECONCILED ANDROID TEST COUNT:        325 / 325 PASSED (100%)
+RUFF LINTING STATUS:                  ALL CHECKS PASSED
+GCP CLOUD RUN REVISION:               safedrive-backend-00004-mrk
+IMAGE DIGEST / TAG:                   safedrive-backend:1e61a680
+GCP DEPLOYMENT ENVIRONMENT:           ENVIRONMENT=development, RELEASE_GIT_SHA=1e61a680...
+BUILT APK SHA-256 HASH:               A7187909B2E4ED7C6A48FC78D72A6A2B264559898EF807C164EA9C394E062470
+INSTALLED XIAOMI APK SHA-256 HASH:     A7187909B2E4ED7C6A48FC78D72A6A2B264559898EF807C164EA9C394E062470
+APK BINARY EQUALITY MATCH:            YES (100% Exact SHA-256 Match)
+ADB REVERSE MAPPING STATUS:           EMPTY (0 reverse port rules present)
+GCP ADDITIVE MODE SWITCHING:          VERIFIED (GCP Cloud -> USB Local -> Demo -> GCP Cloud)
+CARSKY DEPLOYMENT READINESS:          READY FOR CARSKY APK INSTALLATION
 ```
 
 ---
 
-## 3. CarSky Container Registry (Zot) Inspection & Access Guide
+## 3. End-to-End Scenarios Verified on Cloud Run Revision 00004-mrk
 
-* **Registry Hostname:** `https://registry.hackathon-2.carsky.io/`
-* **Registry Engine:** Zot OCI-native container image registry
-* **CLI Authentication Instructions:**
-  1. Log into `https://registry.hackathon-2.carsky.io/` via CarSky Keycloak SSO.
-  2. Open Profile -> **API Keys** (`https://registry.hackathon-2.carsky.io/user/apikey`).
-  3. Click **Create new API key** to generate a personal token starting with `zak_`.
-  4. Run Docker CLI login:
-     ```bash
-     docker login registry.hackathon-2.carsky.io -u hauiavs@hackathon.fpt.com
-     # Paste generated API Key (zak_...) when prompted for password
-     ```
-  5. Tag & Push SafeDrive backend image:
-     ```bash
-     docker tag safedrive-backend:latest registry.hackathon-2.carsky.io/hauiavs/safedrive-backend:latest
-     docker push registry.hackathon-2.carsky.io/hauiavs/safedrive-backend:latest
-     ```
+* **HTTPS Base Endpoint:** `https://safedrive-backend-165374511912.asia-southeast1.run.app/`
+* **WSS Assistant Channel:** `wss://safedrive-backend-165374511912.asia-southeast1.run.app/api/v1/ws/assistant`
+
+### Detailed Scenario Results:
+1. **Session Start (`POST /api/v1/sessions/start`):** `200 OK` (`sessionId: session_d550feed627b466189f01b8173509d1e`)
+2. **WSS Handshake & Frame Stream:** `100% SUCCESSFUL`
+3. **UC1 — Contextual Vehicle Status:**
+   - Input: V=50 km/h, Cabin=24°C, Battery=80%
+   - Output: `"Dữ liệu hiện tại cho thấy xe đang chạy 50 km/h, nhiệt độ cabin 24 độ C và mức năng lượng còn 80%..."` (Leading with real vehicle context!)
+4. **UC3 — Engine Overheat CRITICAL Override:**
+   - Input: Engine Temp = 116°C
+   - Output: Risk `CRITICAL`, Reason `engine_overheat_critical`
+   - Safety Text: `"Nhiệt độ động cơ đã đạt 116 độ C, vượt ngưỡng nguy hiểm. Hãy tấp vào lề và tắt máy ngay lập tức để tránh hỏng động cơ."`
+   - Actions: `SUGGEST_REST_STOP`, `SHOW_WARNING`
 
 ---
 
-## 4. Google Cloud Run WSS & Scenarios Verification
+## 4. Additive Mode Operational Verification
 
-* **GCP Service Deployment:**
-  - Service Name: `safedrive-backend`
-  - Project ID: `gen-lang-client-0307536353`
-  - Region: `asia-southeast1`
-  - Revision: `safedrive-backend-00003-tgv` (`ENVIRONMENT=development`)
-* **Verified End-to-End Scenarios over WSS:**
-  - **Session Start (`POST /api/v1/sessions/start`):** `200 OK` (`sessionId: session_8c4b5357eb9c4043a1acf44b20a5139f`)
-  - **WSS Connection (`wss://.../api/v1/ws/assistant`):** Handshake `100% SUCCESSFUL`
-  - **Scenario 1 (Normal State & Query):** State v1 (50 km/h, 90°C) -> WSS final frame returned `LOW` risk.
-  - **Scenario 2 (Engine CRITICAL 116°C Overheat):** State v2 (116°C) -> WSS final frame returned `CRITICAL` risk with `engine_overheat_critical` warning & actions `SUGGEST_REST_STOP`, `SHOW_WARNING`.
+```text
+Mode 1: GCP Cloud Mode
+  - adb reverse --list: EMPTY
+  - Endpoint: https://safedrive-backend-165374511912.asia-southeast1.run.app/
+  - Result: SUCCESSFUL cloud communication over cellular / Wi-Fi
+
+Mode 2: USB Local Mode
+  - Command: adb reverse tcp:8000 tcp:8000
+  - adb reverse --list: UsbFfs tcp:8000 tcp:8000
+  - Endpoint: http://127.0.0.1:8000/
+  - Result: SUCCESSFUL local laptop backend communication
+
+Mode 3: Demo Mode
+  - Local Mock Gateway in APK
+  - Result: Instant offline simulation
+
+Mode 4: Return to GCP Cloud Mode
+  - Command: adb reverse --remove-all
+  - Result: Saved GCP endpoint restored cleanly without app reinstall or clearing data
+```
 
 ---
 
-## 5. Additive Android Profile & Build Artifacts
+## 5. Security & Development Mode Audit
 
-* **Monorepo Commit SHA:** `882a4ae4396410eb380b19b85b52573e5b0299c9`
-* **Branch:** `claude/gcp-runtime-verification`
-* **APK File Location:** `safedrive-ai (1)/android/app/build/outputs/apk/debug/app-debug.apk`
-* **Fresh APK SHA-256 Hash:** `5C49EC7144E4EE3001B10CBE033A065B9535B7145E61308601E09E15000A99EA`
-* **Android Test Suite:** **325 / 325 PASSED** (100%)
-* **Backend Test Suite:** **274 / 274 PASSED** (100%)
+* **Deployment Configuration:** `ENVIRONMENT=development`, `allow-unauthenticated`
+* **Health & Readiness Endpoints:** Publicly accessible (`/health`, `/ready`)
+* **State & Emergency Endpoints:** Protected by validated schema rules & deterministic policy evaluation
+* **Competition Mitigation:** Maximum instances set to 1 (`--max-instances=1`), Cloud Run autoscaling bounded, emergency dispatch set to `realEmergencyDispatchEnabled: false`.
