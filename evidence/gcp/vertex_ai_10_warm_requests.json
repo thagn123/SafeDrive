@@ -1,0 +1,252 @@
+[
+  {
+    "requestId": "req_verify_f852a41f",
+    "message": {
+      "id": "msg_req_verify_f852a41f",
+      "sender": "SAFEDRIVE",
+      "text": "Xe của bạn đang chạy với tốc độ 50 km/h, nhiệt độ động cơ là 90 độ C và nhiệt độ cabin là 24 độ C. Mức năng lượng còn 65%.",
+      "timestampMs": 1785948685495,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 786
+    },
+    "serverTimeMs": 1785948686281,
+    "serverProcessingMs": 786,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_bb98a535",
+    "message": {
+      "id": "msg_req_verify_bb98a535",
+      "sender": "SAFEDRIVE",
+      "text": "Dữ liệu hiện tại cho thấy xe đang chạy 50 km/h, nhiệt độ cabin 24 độ C và mức năng lượng còn 65%.",
+      "timestampMs": 1785948686400,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 534
+    },
+    "serverTimeMs": 1785948686934,
+    "serverProcessingMs": 534,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_a3cc2497",
+    "message": {
+      "id": "msg_req_verify_a3cc2497",
+      "sender": "SAFEDRIVE",
+      "text": "Xe của bạn đang chạy 50 km/h, nhiệt độ động cơ là 90 độ C, nhiệt độ cabin là 24 độ C và mức năng lượng còn 65%.",
+      "timestampMs": 1785948687046,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 587
+    },
+    "serverTimeMs": 1785948687633,
+    "serverProcessingMs": 587,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_beef8b8a",
+    "message": {
+      "id": "msg_req_verify_beef8b8a",
+      "sender": "SAFEDRIVE",
+      "text": "Dữ liệu hiện tại cho thấy xe đang chạy 50 km/h, nhiệt độ động cơ 90 độ C, nhiệt độ cabin 24 độ C và mức năng lượng còn 65%.",
+      "timestampMs": 1785948687787,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 400
+    },
+    "serverTimeMs": 1785948688187,
+    "serverProcessingMs": 400,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_23eb0cbe",
+    "message": {
+      "id": "msg_req_verify_23eb0cbe",
+      "sender": "SAFEDRIVE",
+      "text": "Xe của bạn đang chạy với tốc độ 50 km/h, nhiệt độ động cơ là 90 độ C và nhiệt độ trong cabin là 24 độ C. Mức năng lượng còn lại là 65%.",
+      "timestampMs": 1785948688281,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 395
+    },
+    "serverTimeMs": 1785948688676,
+    "serverProcessingMs": 395,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_f3100667",
+    "message": {
+      "id": "msg_req_verify_f3100667",
+      "sender": "SAFEDRIVE",
+      "text": "Xe đang chạy với tốc độ 50 km/h, nhiệt độ cabin là 24 độ C và mức năng lượng còn 65%.",
+      "timestampMs": 1785948689077,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 346
+    },
+    "serverTimeMs": 1785948689423,
+    "serverProcessingMs": 346,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_479a9ca5",
+    "message": {
+      "id": "msg_req_verify_479a9ca5",
+      "sender": "SAFEDRIVE",
+      "text": "Xe của bạn đang chạy với tốc độ 50 km/h, nhiệt độ động cơ là 90 độ C, nhiệt độ trong cabin là 24 độ C và mức năng lượng còn lại là 65%.",
+      "timestampMs": 1785948689609,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 387
+    },
+    "serverTimeMs": 1785948689996,
+    "serverProcessingMs": 387,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_829eab0f",
+    "message": {
+      "id": "msg_req_verify_829eab0f",
+      "sender": "SAFEDRIVE",
+      "text": "Xe đang chạy với tốc độ 50 km/h, nhiệt độ động cơ là 90 độ C và nhiệt độ cabin là 24 độ C. Mức năng lượng còn 65%.",
+      "timestampMs": 1785948690116,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 541
+    },
+    "serverTimeMs": 1785948690657,
+    "serverProcessingMs": 541,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_20b1741c",
+    "message": {
+      "id": "msg_req_verify_20b1741c",
+      "sender": "SAFEDRIVE",
+      "text": "Xe của bạn đang chạy với tốc độ 50 km/h, nhiệt độ động cơ là 90 độ C và nhiệt độ trong cabin là 24 độ C. Mức năng lượng còn 65%.",
+      "timestampMs": 1785948690743,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 413
+    },
+    "serverTimeMs": 1785948691156,
+    "serverProcessingMs": 413,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  },
+  {
+    "requestId": "req_verify_01efd514",
+    "message": {
+      "id": "msg_req_verify_01efd514",
+      "sender": "SAFEDRIVE",
+      "text": "Xe của bạn đang chạy với tốc độ 50 km/h, nhiệt độ động cơ là 90 độ C và nhiệt độ cabin là 24 độ C. Mức năng lượng còn 65%.",
+      "timestampMs": 1785948691297,
+      "risk": {
+        "level": "LOW",
+        "title": "Trạng thái vận hành bình thường",
+        "message": "Không có điều kiện rủi ro cao nào trong dữ liệu xe mới nhất.",
+        "reasonCodes": []
+      },
+      "actions": [],
+      "route": "assistant.general",
+      "latencyMs": 494
+    },
+    "serverTimeMs": 1785948691791,
+    "serverProcessingMs": 494,
+    "model": "vertex_ai/gemini-2.5-flash",
+    "finishReason": "STOP",
+    "llmUsed": true,
+    "fallback": false,
+    "fallbackReason": null
+  }
+]

@@ -1,0 +1,6 @@
+1 {'llmUsed': False, 'fallback': True, 'fallbackReason': 'provider_unavailable', 'model': 'deterministic-context-router'}
+2 {'llmUsed': False, 'fallback': True, 'fallbackReason': 'provider_unavailable', 'model': 'deterministic-context-router'}
+3 {'llmUsed': False, 'fallback': True, 'fallbackReason': 'provider_unavailable', 'model': 'deterministic-context-router'}
+4 {'llmUsed': False, 'fallback': True, 'fallbackReason': 'provider_unavailable', 'model': 'deterministic-context-router'}
+5 {'llmUsed': True, 'fallback': False, 'fallbackReason': None, 'model': 'vertex_ai/gemini-2.5-flash'}
+RECOVERY_CONFIRMED
