@@ -92,3 +92,16 @@
   false positives against ordinary mixed text. This narrow pattern cannot catch every conceivable
   way a model could hallucinate about something the driver mentions in free text — only this
   specific, previously-observed failure shape.
+- **RESOLVED — narrated replies were silently falling back to the generic redirect for clearly
+  in-scope questions, because of a number-formatting mismatch, not a design gap.** Found via real
+  on-device testing: "xe của tôi thế nào" returned the out-of-scope template even though it is a
+  plain vehicle-status question. The model's raw answer was actually correct and well-grounded, but
+  `_validate_and_normalize`'s number check (`app/mobile/llm.py`) compared numbers as raw strings —
+  `GROUNDED_CONTEXT_JSON` serializes floats as `"60.0"`, the model naturally wrote `"60"`, and the
+  mismatch made a correctly-grounded value look invented, rejecting the whole reply. Fixed by
+  canonicalizing numbers to their numeric value (`_normalize_number_token`) before comparing, for
+  every narrated route, not just `assistant.general`. See `docs/TEST_EVIDENCE.md` for the raw
+  before/after model output and live re-verification. A local 7B quantized model still occasionally
+  produces non-Vietnamese text mid-reply or echoes the fallback near-verbatim for off-topic
+  questions — the guardrail correctly catches and falls back safely on both; this residual
+  non-determinism was not chased further.

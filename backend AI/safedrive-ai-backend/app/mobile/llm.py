@@ -24,6 +24,24 @@ _VIETNAMESE_WORD = re.compile(
 )
 _NUMBER = re.compile(r"(?<![\w.])-?\d+(?:[.,]\d+)?")
 
+
+def _normalize_number_token(token: str) -> str:
+    """Canonicalize a numeric token so equal values compare equal regardless of
+    trailing-zero formatting. GROUNDED_CONTEXT_JSON serializes floats like
+    ``speedKmh`` as "60.0", but the model naturally drops the redundant decimal
+    when speaking a whole number aloud ("60 km/h") -- without this, that
+    perfectly grounded value would look like an invented number and the whole
+    reply would be rejected back to the deterministic fallback.
+    """
+
+    try:
+        value = float(token)
+    except ValueError:
+        return token
+    if value == int(value):
+        return str(int(value))
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
 # Deterministic tone selection from the already-decided risk level -- the model is told
 # which tone to use, it never picks one itself. HIGH/CRITICAL are included for
 # defensiveness even though MobileSessionStore._can_narrate never actually routes those
@@ -54,7 +72,10 @@ def _json_default(value: object) -> object:
 
 
 def _number_tokens(value: str) -> set[str]:
-    return {match.group(0).replace(",", ".") for match in _NUMBER.finditer(value)}
+    return {
+        _normalize_number_token(match.group(0).replace(",", "."))
+        for match in _NUMBER.finditer(value)
+    }
 
 
 @dataclass(frozen=True, slots=True)

@@ -598,3 +598,66 @@ UNKNOWN_TO_CATALOG  "Ma P0130 nghia la gi?" (real code, not in the 7-entry catal
 
 Docker: `docker compose down && docker compose build --no-cache && docker compose up -d` →
 image rebuilt from this round's source, container healthy, `GET /health`/`GET /ready` both pass.
+
+## Number-grounding false-rejection bug (found via real device testing, 2026-08-05)
+
+**Symptom** (reported by the human tester from the actual on-device Android app, real backend,
+real Ollama): asking clearly in-scope questions -- "xe của tôi thế nào", "xe tôi hiện tại thế
+nào" -- returned the generic `assistant.general` out-of-scope redirect ("câu hỏi này có thể nằm
+ngoài phạm vi hỗ trợ của tôi...") instead of an actual answer, with `model=deterministic-context-
+router` and `latency=0ms` in Developer Mode, i.e. no real narration was ever surfaced to the user.
+
+**Root cause, found by capturing the raw pre-guardrail model output** (`OllamaNarrator._post_chat`
+called directly, bypassing `_validate_and_normalize`): the model's answer was already correct and
+well-grounded --
+
+> "Xe của bạn đang chạy ở tốc độ 60 km/h, nhiệt độ động cơ là 89°C, và nhiệt độ cabin là 25°C.
+> Điện thoại còn 55%. Bạn có cần kiểm tra gì khác không?"
+
+-- but `_validate_and_normalize`'s number-grounding check (`app/mobile/llm.py`) compared numbers as
+raw strings. `GROUNDED_CONTEXT_JSON` serializes floats as `"60.0"`, `"89.0"`, `"25.0"`; the model
+naturally wrote `"60"`, `"89"`, `"25"` (dropping the redundant decimal, as any natural speaker
+would). `"60" != "60.0"` as strings, so every one of those correctly-grounded numbers looked like
+an invented fact and the entire reply was silently rejected back to the canned fallback -- for
+*any* narrated route, not just `assistant.general` (the same `_number_tokens`/
+`_validate_and_normalize` helpers back `rewrite_grounded_reply` too), any time the model referenced
+a float-valued context field in natural (integer-looking) form. This is very likely why the
+KNOWN_BUT_NOT_ACTIVE DTC case earlier in this document also silently fell back on that run.
+
+**Fix**: `app/mobile/llm.py` — `_number_tokens` now canonicalizes each extracted number through a
+new `_normalize_number_token` (parses to `float`, renders whole numbers without a trailing `.0`,
+otherwise strips trailing zeros) before the subset-comparison checks, so `"60"` and `"60.0"`
+compare equal by value, not by exact string.
+
+**Not fixed, and deliberately not chased**: the local 7B quantized model occasionally produces
+non-Vietnamese (CJK) garbage mid-reply, or echoes `DETERMINISTIC_FALLBACK` near-verbatim for a
+genuinely off-topic question instead of generating fresh redirect wording. Both are inherent
+non-determinism of a small local model, not a code bug; the guardrail's job is exactly to catch
+and safely fall back on those, which it does. Chasing 100% first-attempt narration success against
+a quantized 7B model was out of scope for this fix.
+
+**Regression tests added**: `tests/test_mobile_llm.py` --
+`test_ollama_narrator_accepts_a_grounded_float_context_value_written_as_a_whole_number` and
+`test_answer_open_query_accepts_a_grounded_float_context_value_written_as_a_whole_number`, both
+constructing a context float (`31.0`) and a mocked model reply that writes it as `"31"`, asserting
+the reply is now accepted rather than rejected.
+
+```
+uv run pytest -q         → 274 passed (272 + 2 new), ~18s
+uv run ruff check app tests → All checks passed!
+```
+
+**Live re-verification, rebuilt Docker container, real Ollama, real vehicle state (speed 60 km/h,
+engine 89°C, cabin 25°C, energy 55%, 20 min continuous driving)**, same phrasing that failed on
+device, run 3x to account for real model sampling variance:
+
+```
+"xe của tôi thế nào"          → 2/3 runs: llmUsed=true, natural grounded answer citing the
+                                  actual speed/engine-temp/cabin-temp/energy values
+                                  1/3 run: llmUsed=false, fallback=true (model briefly emitted
+                                  CJK text mid-reply -- correctly caught and safely rejected)
+"xe tôi hiện tại thế nào"     → 3/3 runs: llmUsed=true, natural grounded answer
+```
+
+Before this fix, both phrasings were 0/6 across the same test matrix -- every attempt fell back to
+the generic out-of-scope redirect regardless of how clearly in-scope the question was.

@@ -96,6 +96,41 @@ async def test_ollama_narrator_rejects_reply_that_drops_approved_vehicle_facts(
 
 
 @pytest.mark.asyncio
+async def test_ollama_narrator_accepts_a_grounded_float_context_value_written_as_a_whole_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GROUNDED_CONTEXT_JSON serializes vehicle.cabin_temperature_c as 31.0, but the
+    model naturally drops the redundant decimal when it names a whole-number reading
+    pulled fresh from context ("31 do C") -- something the system prompt explicitly
+    encourages ("weave in a relevant real value... instead of sounding like a canned
+    line"). Live testing found this silently rejected every such reply as if the model
+    had invented the number, because "31" and "31.0" compared unequal as raw strings."""
+
+    kwargs = narration_kwargs()
+    kwargs["approved_reply"] = "Bạn có thể tiếp tục lái xe bình thường."
+    response = httpx.Response(
+        200,
+        json={
+            "message": {
+                "content": "Xe bạn đang ở 31 độ C, vẫn trong ngưỡng an toàn."
+            }
+        },
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.rewrite_grounded_reply(**kwargs)
+
+    assert result is not None
+    assert "31" in result
+
+
+@pytest.mark.asyncio
 async def test_ollama_narrator_receives_structured_vehicle_context(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
     response = httpx.Response(
@@ -291,6 +326,39 @@ async def test_answer_open_query_rejects_a_hallucinated_number_not_in_context(
     narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
 
     assert await narrator.answer_open_query(**open_query_kwargs()) is None
+
+
+@pytest.mark.asyncio
+async def test_answer_open_query_accepts_a_grounded_float_context_value_written_as_a_whole_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduces a live bug found manually asking "xe của tôi thế nào": the model
+    correctly grounded its answer in vehicle.cabin_temperature_c (31.0 in context) but
+    wrote it naturally as "31 độ C". Before the number-token normalization fix, "31"
+    and "31.0" compared unequal and the whole reply was rejected back to the generic
+    deterministic_fallback -- exactly the "rigid, doesn't understand my question"
+    behavior reported against a genuinely in-scope, well-grounded question."""
+
+    response = httpx.Response(
+        200,
+        json={
+            "message": {
+                "content": "Xe của bạn đang ở 31 độ C trong cabin, năng lượng còn 18%."
+            }
+        },
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.answer_open_query(**open_query_kwargs())
+
+    assert result is not None
+    assert "31" in result
 
 
 @pytest.mark.asyncio
