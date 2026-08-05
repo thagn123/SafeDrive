@@ -32,7 +32,7 @@ Backend (FastAPI)
   AssistantQueryResponse (risk, actions, llmUsed, fallback, fallbackReason)
         │
         ▼
-Android renders + speaks (TTS only when speak=true)
+Android renders; speaks via TTS only when the local "ttsEnabled" preference is on
 ```
 
 **Safety decides when to warn. The LLM decides only how to explain it naturally.** Concretely:
@@ -120,15 +120,23 @@ generate, rather than relying on the model reliably following instructions.
   once risk is LOW/MEDIUM — chit-chat (`companion.conversation`), fatigue guidance, HVAC
   confirmations, vehicle status, and DTC diagnostics (`OllamaNarrator.rewrite_grounded_reply`,
   `app/mobile/llm.py`). The reply's facts, numbers, and any action are fixed by the deterministic
-  system first; the model can only change the wording, and a guardrail (number-grounding plus, for
-  DTC/fatigue/status, `ContextAwareAssistant.required_narration_snippets`) rejects anything that
-  drifts and falls back to the deterministic text.
+  system first; the model can only change the wording, and a guardrail rejects anything that drifts
+  and falls back to the deterministic text: language (`_looks_vietnamese_enough` — CJK or
+  substantially non-Vietnamese output triggers exactly one retry with a stricter instruction before
+  falling back), number-grounding (every number the model states must match a context field's
+  actual value, and if it's written with a recognized unit like "%"/"°C"/"km/h" it must match a
+  field that genuinely carries that unit — `_grounded_values_by_unit`, so a narrated "60%" can't be
+  accepted just because 60 happens to be the unrelated speed in km/h), and, for DTC/fatigue/status,
+  `ContextAwareAssistant.required_narration_snippets`.
 - `assistant.general` — the true catch-all when nothing matched any known category — gets a
   genuinely different treatment (`OllamaNarrator.answer_open_query`): the model reads the user's
   actual message and either answers it from `ContextPack` facts if it's vehicle/trip/driving-
   related, or gives a brief, honest in-scope redirect otherwise (SafeDrive is a driving-safety
-  assistant, not a general chatbot). `assistant.clarify` (genuine ambiguity among fatigue/cabin/
-  vehicle-concern) stays on the reword-only path above.
+  assistant, not a general chatbot). The same language/number-grounding guardrail applies, except
+  the model is not required to repeat every number from the (now real, contextual)
+  `deterministic_fallback` text verbatim — that fallback is an example of tone/topic, not a fixed
+  decision to preserve, so `require_approved_numbers=False` for this path only. `assistant.clarify`
+  (genuine ambiguity among fatigue/cabin/vehicle-concern) stays on the reword-only path above.
 - Advisory intent reclassification, scoped to `assistant.clarify` only (genuine ambiguity among
   fatigue/cabin/vehicle-concern keywords) — still only ever selects an existing template, never
   invents wording. Deliberately excludes `assistant.general`'s true catch-all: audit evidence

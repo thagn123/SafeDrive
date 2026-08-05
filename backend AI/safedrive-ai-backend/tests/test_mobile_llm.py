@@ -2,7 +2,27 @@ import httpx
 import pytest
 
 from app.mobile.context import ContextPack, ContextValue
-from app.mobile.llm import OllamaIntentClassifier, OllamaNarrator
+from app.mobile.llm import OllamaIntentClassifier, OllamaNarrator, _looks_vietnamese_enough
+
+
+def test_looks_vietnamese_enough_accepts_diacritic_text() -> None:
+    assert _looks_vietnamese_enough("Xe bạn đang chạy ở tốc độ bình thường.") is True
+
+
+def test_looks_vietnamese_enough_rejects_pure_english() -> None:
+    assert _looks_vietnamese_enough("Your car is fine, drive safely and enjoy the trip.") is False
+
+
+def test_looks_vietnamese_enough_rejects_cjk() -> None:
+    assert _looks_vietnamese_enough("我建议您休息一下。") is False
+
+
+def test_looks_vietnamese_enough_accepts_a_dtc_code_mixed_into_vietnamese() -> None:
+    assert _looks_vietnamese_enough("Mã U0100 đang hoạt động, mức độ trung bình.") is True
+
+
+def test_looks_vietnamese_enough_rejects_empty_text() -> None:
+    assert _looks_vietnamese_enough("   ") is False
 
 
 def context_pack() -> ContextPack:
@@ -77,6 +97,130 @@ async def test_ollama_narrator_rejects_non_vietnamese_output(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_ollama_narrator_rejects_english_heavy_output_when_vietnamese_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """vi-VN is the required locale; a fluent but entirely English reply must be
+    rejected the same way a Chinese one is, even though it contains no CJK
+    characters at all -- the old guardrail only checked for CJK plus presence of one
+    of nine hardcoded Vietnamese words, which a genuine English sentence could pass
+    only by accident. Both attempts return English here, so the one retry is also
+    rejected and the caller falls back to the deterministic reply."""
+
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Your car is running fine at a safe temperature."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    assert await narrator.rewrite_grounded_reply(**narration_kwargs()) is None
+
+
+@pytest.mark.asyncio
+async def test_ollama_narrator_dtc_code_does_not_cause_a_false_language_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DTC code or technical abbreviation carries no Vietnamese diacritics on its
+    own, but must not make an otherwise-clearly-Vietnamese reply fail the language
+    check just because it's mentioned."""
+
+    kwargs = narration_kwargs()
+    kwargs["approved_reply"] = "M\u00e3 U0100 hi\u1ec7n \u0111ang ho\u1ea1t \u0111\u1ed9ng."
+    response = httpx.Response(
+        200,
+        json={
+            "message": {
+                "content": "M\u00e3 U0100 hi\u1ec7n \u0111ang ho\u1ea1t \u0111\u1ed9ng, m\u1ee9c \u0111\u1ed9 trung b\u00ecnh, b\u1ea1n n\u00ean ch\u00fa \u00fd."
+            }
+        },
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.rewrite_grounded_reply(**kwargs)
+
+    assert result is not None
+    assert "U0100" in result
+
+
+@pytest.mark.asyncio
+async def test_ollama_narrator_retries_once_and_accepts_a_vietnamese_retry_after_a_non_vietnamese_first_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first attempt comes back Chinese; per spec this must trigger exactly one
+    retry with a stricter Vietnamese instruction, and the retry's clean Vietnamese
+    text must be what's ultimately accepted."""
+
+    kwargs = narration_kwargs()
+    kwargs["approved_reply"] = "B\u1ea1n c\u00f3 th\u1ec3 ti\u1ebfp t\u1ee5c l\u00e1i xe b\u00ecnh th\u01b0\u1eddng."
+    calls: list[dict[str, object]] = []
+    chinese = httpx.Response(
+        200,
+        json={"message": {"content": "\u6211\u5efa\u8bae\u60a8\u4f11\u606f\u4e00\u4e0b\u3002"}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+    vietnamese = httpx.Response(
+        200,
+        json={"message": {"content": "B\u1ea1n n\u00ean ngh\u1ec9 ng\u01a1i m\u1ed9t ch\u00fat cho t\u1ec9nh t\u00e1o."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        calls.append(kwargs.get("json", {}))
+        return chinese if len(calls) == 1 else vietnamese
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.rewrite_grounded_reply(**kwargs)
+
+    assert len(calls) == 2
+    assert result is not None
+    assert "ngh\u1ec9" in result
+    # The retry call carries an extra strict-Vietnamese system message the first call didn't.
+    assert len(calls[1]["messages"]) == len(calls[0]["messages"]) + 1  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_ollama_narrator_retries_at_most_once_when_both_attempts_stay_non_vietnamese(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the retry also comes back non-Vietnamese, the caller must fall back to the
+    deterministic reply rather than retrying indefinitely -- exactly two model calls
+    total, never more."""
+
+    calls: list[object] = []
+    chinese = httpx.Response(
+        200,
+        json={"message": {"content": "\u6211\u5efa\u8bae\u60a8\u4f11\u606f\u4e00\u4e0b\u3002"}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        calls.append(object())
+        return chinese
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.rewrite_grounded_reply(**narration_kwargs())
+
+    assert result is None
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_ollama_narrator_rejects_reply_that_drops_approved_vehicle_facts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -128,6 +272,85 @@ async def test_ollama_narrator_accepts_a_grounded_float_context_value_written_as
 
     assert result is not None
     assert "31" in result
+
+
+@pytest.mark.asyncio
+async def test_ollama_narrator_accepts_a_new_context_number_with_its_correct_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """context_pack() has trip.continuous_driving_minutes=245, not mentioned in
+    approved_reply. The model citing it fresh, with the correct MINUTES unit, must be
+    accepted -- this is the positive case the semantic-unit check must not break."""
+
+    kwargs = narration_kwargs()
+    kwargs["approved_reply"] = "Bạn có thể tiếp tục lái xe bình thường."
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Bạn đã lái liên tục 245 phút, nên cân nhắc nghỉ ngơi."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.rewrite_grounded_reply(**kwargs)
+
+    assert result is not None
+    assert "245" in result
+
+
+@pytest.mark.asyncio
+async def test_ollama_narrator_rejects_a_value_grounded_in_the_wrong_semantic_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """context_pack() has trip.continuous_driving_minutes=245 (MINUTES) but no
+    *_percent field equal to 245. A reply claiming "245%" must be rejected even though
+    245 genuinely appears in context -- under a different field and unit entirely.
+    This is the exact speed-must-not-ground-battery failure mode."""
+
+    kwargs = narration_kwargs()
+    kwargs["approved_reply"] = "Bạn có thể tiếp tục lái xe bình thường."
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Xe bạn còn 245% năng lượng, rất an toàn."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    assert await narrator.rewrite_grounded_reply(**kwargs) is None
+
+
+@pytest.mark.asyncio
+async def test_ollama_narrator_rejects_a_context_value_written_with_the_wrong_unit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """context_pack() has vehicle.energy_percent=18 (PERCENT) but no *_minutes field
+    equal to 18. A reply claiming "18 phút" must be rejected -- the value exists in
+    context, but never under a MINUTES unit."""
+
+    kwargs = narration_kwargs()
+    kwargs["approved_reply"] = "Bạn có thể tiếp tục lái xe bình thường."
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Bạn đã lái liên tục 18 phút rồi, hãy chú ý."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    assert await narrator.rewrite_grounded_reply(**kwargs) is None
 
 
 @pytest.mark.asyncio
@@ -359,6 +582,39 @@ async def test_answer_open_query_accepts_a_grounded_float_context_value_written_
 
     assert result is not None
     assert "31" in result
+
+
+@pytest.mark.asyncio
+async def test_answer_open_query_does_not_require_repeating_every_fallback_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """assistant.general's deterministic_fallback is now a real, number-bearing vehicle
+    summary (speed/cabin/energy -- see ContextAwareAssistant). answer_open_query must
+    not force the model's genuinely different free-form answer to mechanically repeat
+    every one of those numbers -- only rewrite_grounded_reply's fixed-decision-
+    preservation path needs that; a free-form answer may legitimately talk about a
+    different subset of facts than the fallback example happens to mention."""
+
+    kwargs = open_query_kwargs()
+    kwargs["deterministic_fallback"] = (
+        "Dữ liệu hiện tại cho thấy xe đang chạy 60 km/h, nhiệt độ cabin 25 độ C và mức "
+        "năng lượng còn 18%. Câu hỏi này có thể nằm ngoài phạm vi hỗ trợ của tôi."
+    )
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Xe của bạn còn 18% năng lượng."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.answer_open_query(**kwargs)
+
+    assert result == "Xe của bạn còn 18% năng lượng."
 
 
 @pytest.mark.asyncio

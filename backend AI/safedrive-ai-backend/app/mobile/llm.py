@@ -9,7 +9,9 @@ receives raw camera, audio, CAN, or sensor streams.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,12 +19,52 @@ import httpx
 
 from app.mobile.context import ContextPack
 
+_logger = logging.getLogger("app.narration")
+
 _CJK_CHARACTERS = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
-_VIETNAMESE_WORD = re.compile(
-    r"\b(t\u00f4i|b\u1ea1n|xe|l\u00e1i|\u0111\u01b0\u1eddng|c\u00f9ng|c\u00f3|v\u00e0|n\u00ean)\b",
-    re.IGNORECASE,
-)
 _NUMBER = re.compile(r"(?<![\w.])-?\d+(?:[.,]\d+)?")
+
+
+def _has_vietnamese_diacritics(text: str) -> bool:
+    if "\u0111" in text.lower():  # "\u0111" does not decompose under NFD
+        return True
+    decomposed = unicodedata.normalize("NFD", text)
+    return any(unicodedata.category(char) == "Mn" for char in decomposed)
+
+
+def _looks_vietnamese_enough(text: str) -> bool:
+    """Minimal output-language validator: rejects CJK-heavy or English-heavy replies
+    when Vietnamese (vi-VN) is required. Presence of any Vietnamese diacritic mark
+    anywhere in the reply is a reliable "substantially Vietnamese" signal, since
+    virtually every genuine Vietnamese sentence carries tone marks -- while a DTC code,
+    unit, or product name embedded in an otherwise-Vietnamese sentence carries no
+    diacritics of its own and must not by itself fail this check.
+    """
+
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if _CJK_CHARACTERS.search(stripped) is not None:
+        return False
+    return _has_vietnamese_diacritics(stripped)
+
+
+def _with_stricter_vietnamese_retry(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **payload,
+        "messages": [
+            *payload["messages"],
+            {
+                "role": "system",
+                "content": (
+                    "Your previous reply was rejected for not being clearly Vietnamese. "
+                    "Reply again, entirely in Vietnamese (Tieng Viet), using Vietnamese "
+                    "words and grammar throughout -- not Chinese, not English. Technical "
+                    "codes, units, and product names may stay as-is."
+                ),
+            },
+        ],
+    }
 
 
 def _normalize_number_token(token: str) -> str:
@@ -76,6 +118,100 @@ def _number_tokens(value: str) -> set[str]:
         _normalize_number_token(match.group(0).replace(",", "."))
         for match in _NUMBER.finditer(value)
     }
+
+
+# Every ContextValue.name in app/mobile/context.py is a dot/underscore-separated
+# semantic path (e.g. "vehicle.speed_kmh", "vehicle.cabin_temperature_c"). The unit is
+# already encoded in that name's suffix -- this table reads it back out instead of
+# hardcoding a unit per specific field, so any future field ending in one of these
+# suffixes is covered automatically.
+_FIELD_UNIT_SUFFIXES: tuple[tuple[str, str], ...] = (
+    ("_kmh", "KMH"),
+    ("_temperature_c", "CELSIUS"),
+    ("_percent", "PERCENT"),
+    ("_minutes", "MINUTES"),
+    ("_seconds", "SECONDS"),
+)
+
+# Matched against the text immediately following a number in the model's raw output
+# (Vietnamese with diacritics, not accent-stripped) to decide which of the units above,
+# if any, the model is claiming for that number. A number with no recognized trailing
+# unit falls back to the older, unit-agnostic "does this value appear anywhere in
+# context" check -- this table only ever makes grounding *stricter*, never looser.
+_UNIT_SURFACE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\s*(?:km\s*/\s*(?:h|giờ)|kmh)\b", re.IGNORECASE), "KMH"),
+    (re.compile(r"\s*(?:°\s*c|độ\s*c|do\s*c)\b", re.IGNORECASE), "CELSIUS"),
+    (re.compile(r"\s*(?:%|phần\s*trăm|phan\s*tram)"), "PERCENT"),
+    (re.compile(r"\s*(?:phút|phut|minutes?|min)\b", re.IGNORECASE), "MINUTES"),
+    (re.compile(r"\s*(?:giây|giay|seconds?|sec)\b", re.IGNORECASE), "SECONDS"),
+)
+
+
+def _unit_for_field(name: str) -> str | None:
+    for suffix, unit in _FIELD_UNIT_SUFFIXES:
+        if name.endswith(suffix):
+            return unit
+    return None
+
+
+def _detect_trailing_unit(text: str, end: int) -> str | None:
+    tail = text[end : end + 16]
+    for pattern, unit in _UNIT_SURFACE_PATTERNS:
+        if pattern.match(tail):
+            return unit
+    return None
+
+
+def _numeric_context_values(context_pack: ContextPack) -> list[tuple[str, float]]:
+    values: list[tuple[str, float]] = []
+    for value in context_pack.values:
+        if isinstance(value.value, bool) or not isinstance(value.value, (int, float)):
+            continue
+        values.append((value.name, float(value.value)))
+    return values
+
+
+def _grounded_values_by_unit(
+    context_pack: ContextPack, allowed_actions: tuple[dict[str, object], ...]
+) -> dict[str, set[str]]:
+    """Field-name-derived unit -> the set of normalized numeric values genuinely
+    carrying that unit right now. Used to reject e.g. a narrated "60%" when the only
+    context value equal to 60 is `vehicle.speed_kmh` (unit KMH, not PERCENT) -- the
+    old check only asked "does 60 appear anywhere in context", which a same-numbered
+    but semantically wrong field would incorrectly satisfy.
+    """
+
+    by_unit: dict[str, set[str]] = {}
+    for name, numeric_value in _numeric_context_values(context_pack):
+        unit = _unit_for_field(name)
+        if unit is None:
+            continue
+        by_unit.setdefault(unit, set()).add(_normalize_number_token(str(numeric_value)))
+    for action in allowed_actions:
+        target = action.get("hvacTargetTemperatureC")
+        if isinstance(target, (int, float)) and not isinstance(target, bool):
+            by_unit.setdefault("CELSIUS", set()).add(_normalize_number_token(str(target)))
+    return by_unit
+
+
+def _bare_context_numbers(
+    context_pack: ContextPack, allowed_actions: tuple[dict[str, object], ...]
+) -> set[str]:
+    """Unit-agnostic fallback set for numbers the model writes with no unit the
+    parser can recognize -- preserves the original, more permissive behavior for
+    anything the stricter per-unit check above cannot classify either way."""
+
+    numbers = {_normalize_number_token(str(context_pack.state_version))}
+    for name, numeric_value in _numeric_context_values(context_pack):
+        numbers.add(_normalize_number_token(str(numeric_value)))
+    for value in context_pack.values:
+        if value.age_ms is not None:
+            numbers.add(_normalize_number_token(str(value.age_ms)))
+    for action in allowed_actions:
+        target = action.get("hvacTargetTemperatureC")
+        if isinstance(target, (int, float)) and not isinstance(target, bool):
+            numbers.add(_normalize_number_token(str(target)))
+    return numbers
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,15 +320,26 @@ class OllamaNarrator:
                 },
             ],
         }
-        raw_text = await self._post_chat(payload)
+        raw_text, language_ok, retried = await self._post_chat_with_language_retry(payload)
         if raw_text is None:
             return None
-        return self._validate_and_normalize(
+        result = self._validate_and_normalize(
             raw_text,
             approved_reply=approved_reply,
-            context_json=context_json,
+            context_pack=context_pack,
+            allowed_actions=tuple(allowed_actions),
             required_verbatim_snippets=required_verbatim_snippets,
         )
+        _logger.info(
+            "narration_language_check",
+            extra={
+                "event": "narration_language_check",
+                "language_ok": language_ok,
+                "retried": retried,
+                "fallback_used": result is None,
+            },
+        )
+        return result
 
     async def answer_open_query(
         self,
@@ -301,14 +448,49 @@ class OllamaNarrator:
                 },
             ],
         }
-        raw_text = await self._post_chat(payload)
+        raw_text, language_ok, retried = await self._post_chat_with_language_retry(payload)
         if raw_text is None:
             return None
-        return self._validate_and_normalize(
+        result = self._validate_and_normalize(
             raw_text,
             approved_reply=deterministic_fallback,
-            context_json=context_json,
+            context_pack=context_pack,
+            require_approved_numbers=False,
         )
+        _logger.info(
+            "narration_language_check",
+            extra={
+                "event": "narration_language_check",
+                "language_ok": language_ok,
+                "retried": retried,
+                "fallback_used": result is None,
+            },
+        )
+        return result
+
+    async def _post_chat_with_language_retry(
+        self, payload: dict[str, Any]
+    ) -> tuple[str | None, bool, bool]:
+        """Calls the model, and if the reply fails the Vietnamese language check,
+        retries exactly once with a stricter instruction appended. Returns
+        ``(raw_text, initial_language_ok, retried)`` -- ``raw_text`` is whichever
+        attempt's text should be validated next (the retry's, if one was made and the
+        provider answered), or ``None`` if the provider was unreachable outright.
+        HIGH/CRITICAL replies never reach this code path at all (``_can_narrate``
+        excludes them before any narrator method is called), so this retry can never
+        delay a safety-critical response.
+        """
+
+        raw_text = await self._post_chat(payload)
+        if raw_text is None:
+            return None, False, False
+        initial_ok = _looks_vietnamese_enough(raw_text)
+        if initial_ok:
+            return raw_text, True, False
+        retry_text = await self._post_chat(_with_stricter_vietnamese_retry(payload))
+        if retry_text is not None:
+            raw_text = retry_text
+        return raw_text, initial_ok, True
 
     async def _post_chat(self, payload: dict[str, Any]) -> str | None:
         try:
@@ -325,22 +507,45 @@ class OllamaNarrator:
         raw_text: str,
         *,
         approved_reply: str,
-        context_json: str,
+        context_pack: ContextPack,
+        allowed_actions: tuple[dict[str, object], ...] = (),
         required_verbatim_snippets: tuple[str, ...] = (),
+        require_approved_numbers: bool = True,
     ) -> str | None:
         normalized = " ".join(raw_text.split())
         approved_numbers = _number_tokens(approved_reply)
-        supported_numbers = approved_numbers | _number_tokens(context_json)
+        # require_approved_numbers is False only for answer_open_query: its
+        # deterministic_fallback is a real, number-bearing vehicle-status summary (see
+        # ContextAwareAssistant's assistant.general branch), used there purely as an
+        # example of grounded tone/topics -- unlike rewrite_grounded_reply, this route
+        # gives the model a genuine mandate to answer a *different* question than the
+        # fallback covers, so it must not be forced to mechanically repeat every number
+        # from a fallback text it may have had no reason to reference at all.
         if (
             not normalized
             or len(normalized) > 520
-            or _CJK_CHARACTERS.search(normalized) is not None
-            or _VIETNAMESE_WORD.search(normalized) is None
-            or not approved_numbers.issubset(_number_tokens(normalized))
-            or not _number_tokens(normalized).issubset(supported_numbers)
+            or not _looks_vietnamese_enough(normalized)
+            or (require_approved_numbers and not approved_numbers.issubset(_number_tokens(normalized)))
             or not all(snippet in normalized for snippet in required_verbatim_snippets)
         ):
             return None
+
+        by_unit = _grounded_values_by_unit(context_pack, allowed_actions)
+        bare_numbers = approved_numbers | _bare_context_numbers(context_pack, allowed_actions)
+        for match in _NUMBER.finditer(normalized):
+            token = _normalize_number_token(match.group(0).replace(",", "."))
+            if token in approved_numbers:
+                continue
+            unit = _detect_trailing_unit(normalized, match.end())
+            if unit is not None:
+                # A number with a recognized unit must match a context field that
+                # actually carries that unit -- e.g. a narrated "60%" is rejected
+                # unless some *_percent field genuinely equals 60, even though 60
+                # might separately be the (unrelated) speed in km/h.
+                if token not in by_unit.get(unit, ()):
+                    return None
+            elif token not in bare_numbers:
+                return None
         return normalized
 
 

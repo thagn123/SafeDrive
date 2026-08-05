@@ -340,12 +340,20 @@ class ContextAwareAssistant:
             # IntentResolver.resolve()'s true catch-all -- nothing matched any known
             # category at all, so this text must not pretend the driver asked about
             # fatigue/cabin/vehicle-concern (that was the old, misleading shared branch).
-            # It's the deterministic fallback for the narrator's genuine open-answer path
-            # (OllamaNarrator.answer_open_query) when Ollama is unavailable or rejects.
+            # It's also the deterministic fallback for the narrator's genuine open-answer
+            # path (OllamaNarrator.answer_open_query) when Ollama is unavailable or both
+            # attempts are rejected -- it must not be a flat "out of scope" non-answer,
+            # since many assistant.general hits are genuinely vehicle-related questions
+            # phrased in a way no keyword matched (e.g. "xe cua toi the nao"). Leading with
+            # real, current vehicle facts means the driver gets something useful either
+            # way, while the closing sentence still honestly scopes what SafeDrive helps
+            # with for questions that truly are unrelated (trivia, math, general chat).
             return (
                 (
-                    "Tôi là trợ lý an toàn khi lái xe, câu hỏi này có thể nằm ngoài phạm vi hỗ trợ của tôi. "
-                    "Tôi có thể giúp về tình trạng xe, cabin, cảnh báo lỗi hoặc nhu cầu nghỉ ngơi."
+                    f"Dữ liệu hiện tại cho thấy xe đang chạy {state.speedKmh:.0f} km/h, nhiệt độ cabin "
+                    f"{_fmt_temp(state.cabinTemperatureC)} độ C và mức năng lượng còn {state.energyPercent}%. "
+                    "Câu hỏi này có thể nằm ngoài phạm vi hỗ trợ của tôi; tôi có thể giúp cụ thể hơn về "
+                    "tình trạng xe, cabin, cảnh báo lỗi hoặc nhu cầu nghỉ ngơi."
                 ),
                 [],
             )
