@@ -1,5 +1,5 @@
 {
-  "_readme": "Evaluated by tests/test_narration_cases.py against ContextAwareAssistant's deterministic templates (the routes here are never LLM-narrated, see _NARRATABLE_ROUTES in app/mobile/session_store.py, so this IS the final user-facing text). Checked by concept/keyword presence, not exact string match. Cases with skip_reason are documented here for coverage but exercised by a dedicated test elsewhere (they need live HTTP mocking of the Ollama call, which this fixture format does not model).",
+  "_readme": "Evaluated by tests/test_narration_cases.py against ContextAwareAssistant's deterministic templates. Most of these routes are now narratable when risk is LOW/MEDIUM (see _NARRATABLE_ROUTES in app/mobile/session_store.py), so this text is not always the final user-facing text -- it's exercised here both as the Ollama-down/rejected-guardrail fallback and as the input the narrator's grounding/required-verbatim-snippet checks validate against, independent of whether narration is actually attempted (this fixture never calls an LLM). Checked by concept/keyword presence, not exact string match. Cases with skip_reason are documented here for coverage but exercised by a dedicated test elsewhere (they need live HTTP mocking of the Ollama call, which this fixture format does not model).",
   "cases": [
     {
       "id": "normal_state_low_risk",
@@ -157,10 +157,18 @@
       "expected_fallback": false
     },
     {
-      "id": "clarify_when_truly_ambiguous",
+      "id": "assistant_general_catchall_when_totally_unmatched",
       "input": {"text": "Hom nay troi dep nhi"},
+      "must_include_concepts": ["nằm ngoài phạm vi hỗ trợ"],
+      "must_not_include": ["mệt, khó chịu trong cabin, hay lo về tình trạng xe"],
+      "expected_tone": "deterministic",
+      "expected_fallback": false
+    },
+    {
+      "id": "assistant_clarify_when_truly_ambiguous",
+      "input": {"text": "Toi thay hoi kho chiu", "cabin_temperature": 24.0, "driving_minutes": 30, "fatigue": false},
       "must_include_concepts": ["mệt, khó chịu trong cabin, hay lo về tình trạng xe"],
-      "must_not_include": [],
+      "must_not_include": ["nằm ngoài phạm vi hỗ trợ"],
       "expected_tone": "deterministic",
       "expected_fallback": false
     }

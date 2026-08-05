@@ -74,6 +74,7 @@ class OllamaNarrator:
         risk_level: str,
         risk_reasons: tuple[str, ...],
         allowed_actions: list[dict[str, object]],
+        required_verbatim_snippets: tuple[str, ...] = (),
     ) -> str | None:
         """Return a validated contextual rewrite, or ``None`` for deterministic fallback."""
 
@@ -162,17 +163,151 @@ class OllamaNarrator:
                 },
             ],
         }
+        raw_text = await self._post_chat(payload)
+        if raw_text is None:
+            return None
+        return self._validate_and_normalize(
+            raw_text,
+            approved_reply=approved_reply,
+            context_json=context_json,
+            required_verbatim_snippets=required_verbatim_snippets,
+        )
+
+    async def answer_open_query(
+        self,
+        *,
+        user_text: str,
+        deterministic_fallback: str,
+        context_pack: ContextPack,
+        risk_level: str,
+        risk_reasons: tuple[str, ...],
+    ) -> str | None:
+        """Return a validated, genuinely free-form answer for ``assistant.general`` --
+        text the deterministic router could not match to any known category at all --
+        or ``None`` for deterministic fallback.
+
+        Unlike ``rewrite_grounded_reply``, the model here is given a real mandate to read
+        ``USER_MESSAGE`` and answer it, not merely reword an already-decided string. It
+        may only draw on ``GROUNDED_CONTEXT_JSON`` for vehicle/trip/driving facts, and must
+        decline (briefly, honestly, in scope) anything unrelated to driving safety --
+        SafeDrive is a driving-safety assistant, not a general-purpose chatbot. The same
+        guardrail as ``rewrite_grounded_reply`` still gates the output: this route has no
+        DTC code or safety directive to preserve, so ``required_verbatim_snippets`` is
+        never needed here, but hallucinated numbers are still rejected the same way.
+        """
+
+        context_json = json.dumps(
+            {
+                "stateVersion": context_pack.state_version,
+                "values": [
+                    {
+                        "name": value.name,
+                        "value": value.value,
+                        "source": value.source,
+                        "ageMs": value.age_ms,
+                        "status": value.status,
+                    }
+                    for value in context_pack.values
+                ],
+                "missingContext": list(context_pack.missing_context),
+                "constraints": list(context_pack.constraints),
+                "risk": {"level": risk_level, "reasonCodes": list(risk_reasons)},
+            },
+            ensure_ascii=False,
+            default=_json_default,
+            separators=(",", ":"),
+        )
+        tone = _tone_for_risk(risk_level)
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "stream": False,
+            "keep_alive": "30m",
+            "options": {"temperature": 0.2, "num_predict": 128, "num_ctx": 1536},
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "ROLE: You are the in-vehicle assistant for SafeDrive, a driving-safety "
+                        "companion riding along with the driver -- not a general-purpose chatbot. "
+                        "The deterministic system found no known category for this message (not "
+                        "fatigue, HVAC, a vehicle fault, a status check, or small talk), so you get a "
+                        "real chance to read USER_MESSAGE and respond to it directly, using only "
+                        "GROUNDED_CONTEXT_JSON as your source of vehicle/trip/driving facts.\n\n"
+                        "DECIDE, in order:\n"
+                        "1. If USER_MESSAGE names a specific code, part, or identifier (a DTC-shaped "
+                        "code, a part number, anything token-like) that is NOT present in "
+                        "GROUNDED_CONTEXT_JSON, do not guess or invent what it means -- even a "
+                        "plausible-sounding guess is a fabrication. Say plainly you have no verified "
+                        "information about that specific item, then invite a vehicle-related question "
+                        "you can actually answer.\n"
+                        "2. Otherwise, if USER_MESSAGE is genuinely about this vehicle, this trip, or "
+                        "driving right now, and it is answerable from GROUNDED_CONTEXT_JSON alone, "
+                        "answer it factually and concisely using only those facts.\n"
+                        "3. Otherwise (general knowledge, math, opinions, anything unrelated to "
+                        "driving/vehicle/safety) -- do not attempt to answer it, even if you know the "
+                        "answer. Give one brief, honest sentence that SafeDrive is a driving-safety "
+                        "assistant and cannot help with that specific topic, then invite a "
+                        "vehicle-related question instead. DETERMINISTIC_FALLBACK shows the kind of "
+                        "topics you can redirect toward.\n\n"
+                        "FORBIDDEN:\n"
+                        "- Never invent a number, DTC, location, distance, or fact not present in "
+                        "GROUNDED_CONTEXT_JSON.\n"
+                        "- Never invent, guess, or assign a meaning/category/explanation to any code, "
+                        "identifier, or token the driver mentions unless GROUNDED_CONTEXT_JSON verifies "
+                        "it -- not even by analogy to something that IS in GROUNDED_CONTEXT_JSON.\n"
+                        "- Never calculate or state a risk level, diagnose a medical or mechanical "
+                        "condition, create or claim a vehicle action, or dispatch rescue.\n"
+                        "- Never actually answer an off-topic question (trivia, math, general "
+                        "knowledge) just because you can -- redirect instead, per rule 3 above.\n\n"
+                        "STYLE:\n"
+                        "- Vietnamese by default, one to four short sentences a driver can absorb at "
+                        "a glance.\n"
+                        "- Natural spoken language suitable for text-to-speech: no markdown, no raw "
+                        "reason codes, no JSON in the reply.\n"
+                        "- TONE tells you how direct to be -- calm, cautious, or direct -- mirroring "
+                        "the already-decided risk level; never choose or soften it yourself."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"TONE:\n{tone}\n\n"
+                        f"USER_MESSAGE:\n{user_text}\n\n"
+                        f"DETERMINISTIC_FALLBACK:\n{deterministic_fallback}\n\n"
+                        f"GROUNDED_CONTEXT_JSON:\n{context_json}\n\n"
+                        "Return only the Vietnamese user-facing reply."
+                    ),
+                },
+            ],
+        }
+        raw_text = await self._post_chat(payload)
+        if raw_text is None:
+            return None
+        return self._validate_and_normalize(
+            raw_text,
+            approved_reply=deterministic_fallback,
+            context_json=context_json,
+        )
+
+    async def _post_chat(self, payload: dict[str, Any]) -> str | None:
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(f"{self.base_url.rstrip('/')}/api/chat", json=payload)
                 response.raise_for_status()
         except httpx.HTTPError:
             return None
-
         text = response.json().get("message", {}).get("content")
-        if not isinstance(text, str):
-            return None
-        normalized = " ".join(text.split())
+        return text if isinstance(text, str) else None
+
+    @staticmethod
+    def _validate_and_normalize(
+        raw_text: str,
+        *,
+        approved_reply: str,
+        context_json: str,
+        required_verbatim_snippets: tuple[str, ...] = (),
+    ) -> str | None:
+        normalized = " ".join(raw_text.split())
         approved_numbers = _number_tokens(approved_reply)
         supported_numbers = approved_numbers | _number_tokens(context_json)
         if (
@@ -182,6 +317,7 @@ class OllamaNarrator:
             or _VIETNAMESE_WORD.search(normalized) is None
             or not approved_numbers.issubset(_number_tokens(normalized))
             or not _number_tokens(normalized).issubset(supported_numbers)
+            or not all(snippet in normalized for snippet in required_verbatim_snippets)
         ):
             return None
         return normalized

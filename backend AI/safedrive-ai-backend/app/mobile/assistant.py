@@ -8,9 +8,11 @@ from app.api.schemas.mobile import (
     AssistantQueryRequest,
     AssistantQueryResponse,
     ChatMessage,
+    Dtc,
     SafeDriveAction,
     VehicleState,
 )
+from app.mobile import dtc_catalog
 from app.mobile.context import ContextPack, ContextSnapshot, MobileContextBuilder
 from app.mobile.intent import IntentResolution, IntentResolver
 from app.mobile.safety import SafetyEvaluation
@@ -204,22 +206,55 @@ class ContextAwareAssistant:
             )
 
         if route == "vehicle.fault_concern":
-            if state.activeDtcs:
-                dtc = next(
-                    (
-                        candidate
-                        for candidate in state.activeDtcs
-                        if candidate.severity in {"CRITICAL", "HIGH"}
-                    ),
-                    state.activeDtcs[0],
+            mentioned_code = resolution.mentioned_dtc_code
+            if mentioned_code is not None:
+                # The driver named a specific DTC-shaped code (e.g. "Ma U0100 nghia la gi?").
+                # Three tiers, in order of trust:
+                #  1. KNOWN_AND_ACTIVE -- the vehicle's own live state is reporting this exact
+                #     code right now. Always wins over the static catalog below: live state is
+                #     a stronger signal than generic reference data for "what's happening now."
+                #  2. KNOWN_BUT_NOT_ACTIVE -- not currently reported, but the static reference
+                #     catalog (app/mobile/dtc_catalog.py) has a standardized, generic meaning
+                #     for it. Explicitly say it is NOT active -- never implies a current fault.
+                #  3. UNKNOWN_TO_CATALOG -- syntactically DTC-shaped but covered by neither
+                #     source. Say so honestly; never invent a meaning.
+                active_match = ContextAwareAssistant._find_dtc_by_code(state, mentioned_code)
+                if active_match is not None:
+                    return (
+                        ContextAwareAssistant._dtc_reply_text(active_match),
+                        ContextAwareAssistant._actions(safety, request_id),
+                    )
+                catalog_entry = dtc_catalog.lookup(mentioned_code)
+                if catalog_entry is not None:
+                    return (
+                        (
+                            f"Mã {catalog_entry.code} thường có nghĩa là: {catalog_entry.meaning} "
+                            f"Tuy nhiên, mã {catalog_entry.code} hiện KHÔNG có trong danh sách lỗi "
+                            "đang hoạt động của xe bạn -- đây chỉ là thông tin tham khảo chung, "
+                            "không phải tình trạng hiện tại."
+                        ),
+                        [],
+                    )
+                other = ContextAwareAssistant._primary_dtc(state)
+                other_clause = (
+                    f" Xe hiện có mã {other.code} đang hoạt động, mức độ "
+                    f"{_DTC_SEVERITY_LABEL[other.severity]}; bạn có thể hỏi cụ thể về mã này."
+                    if other is not None
+                    else ""
                 )
-                # dtc.recommendation is client-supplied free text and is never spoken here --
-                # only the validated severity enum drives guidance, matching the same field
-                # SafetyRiskEngine already treats as authoritative. See _DTC_SEVERITY_GUIDANCE.
-                severity_label = _DTC_SEVERITY_LABEL[dtc.severity]
-                guidance = _DTC_SEVERITY_GUIDANCE[dtc.severity]
                 return (
-                    f"Xe đang có mã {dtc.code}: {dtc.title}, mức độ {severity_label}. {guidance}",
+                    (
+                        f"Mã {mentioned_code} hiện không có trong danh mục tham khảo đáng tin cậy "
+                        "của tôi, nên tôi không thể xác nhận ý nghĩa của mã này. Bạn có thể tra cứu "
+                        f"tài liệu chẩn đoán chính hãng hoặc dùng máy quét OBD-II để xác nhận.{other_clause}"
+                    ),
+                    ContextAwareAssistant._actions(safety, request_id) if other is not None else [],
+                )
+
+            dtc = ContextAwareAssistant._primary_dtc(state)
+            if dtc is not None:
+                return (
+                    ContextAwareAssistant._dtc_reply_text(dtc),
                     ContextAwareAssistant._actions(safety, request_id),
                 )
             return (
@@ -288,7 +323,11 @@ class ContextAwareAssistant:
                 ContextAwareAssistant._actions(safety, request_id),
             )
 
-        if route == "assistant.clarify" or resolution.needs_clarification:
+        if route == "assistant.clarify":
+            # Genuine ambiguity among specific known intents (fatigue vs. cabin vs. vehicle
+            # concern) -- IntentResolver._resolve_ambiguous's own final fallback. Distinct from
+            # assistant.general below: this route means the driver's message plausibly matched
+            # a safety-relevant category, just not confidently enough to pick one.
             return (
                 (
                     "Bạn đang thấy mệt, khó chịu trong cabin, hay lo về tình trạng xe? "
@@ -297,10 +336,98 @@ class ContextAwareAssistant:
                 [],
             )
 
+        if route == "assistant.general":
+            # IntentResolver.resolve()'s true catch-all -- nothing matched any known
+            # category at all, so this text must not pretend the driver asked about
+            # fatigue/cabin/vehicle-concern (that was the old, misleading shared branch).
+            # It's the deterministic fallback for the narrator's genuine open-answer path
+            # (OllamaNarrator.answer_open_query) when Ollama is unavailable or rejects.
+            return (
+                (
+                    "Tôi là trợ lý an toàn khi lái xe, câu hỏi này có thể nằm ngoài phạm vi hỗ trợ của tôi. "
+                    "Tôi có thể giúp về tình trạng xe, cabin, cảnh báo lỗi hoặc nhu cầu nghỉ ngơi."
+                ),
+                [],
+            )
+
+        # Defensive catch-all: IntentResolver.resolve() cannot currently produce any route
+        # not already handled above, so this is unreachable today. Kept rather than removed
+        # so a future new route added to the resolver without a matching branch here fails
+        # safely with a scoped message instead of an unhandled exception.
         return (
             "Tôi có thể hỗ trợ kiểm tra tình trạng xe, cabin, cảnh báo hoặc nhu cầu nghỉ ngơi. Bạn muốn xem phần nào?",
             [],
         )
+
+    @staticmethod
+    def _primary_dtc(state: VehicleState) -> Dtc | None:
+        if not state.activeDtcs:
+            return None
+        return next(
+            (candidate for candidate in state.activeDtcs if candidate.severity in {"CRITICAL", "HIGH"}),
+            state.activeDtcs[0],
+        )
+
+    @staticmethod
+    def _find_dtc_by_code(state: VehicleState, code: str) -> Dtc | None:
+        return next(
+            (candidate for candidate in state.activeDtcs if candidate.code.upper() == code.upper()),
+            None,
+        )
+
+    @staticmethod
+    def _dtc_reply_text(dtc: Dtc) -> str:
+        # dtc.recommendation is client-supplied free text and is never spoken here -- only
+        # the validated severity enum drives guidance, matching the same field
+        # SafetyRiskEngine already treats as authoritative. See _DTC_SEVERITY_GUIDANCE.
+        severity_label = _DTC_SEVERITY_LABEL[dtc.severity]
+        guidance = _DTC_SEVERITY_GUIDANCE[dtc.severity]
+        return f"Xe đang có mã {dtc.code}: {dtc.title}, mức độ {severity_label}. {guidance}"
+
+    @staticmethod
+    def required_narration_snippets(
+        resolution: IntentResolution,
+        snapshot: ContextSnapshot,
+        safety: SafetyEvaluation,
+    ) -> tuple[str, ...]:
+        """Non-numeric literal clauses a narrated reply must preserve verbatim.
+
+        Generalizes OllamaNarrator's own number-preservation guardrail to the safety-
+        relevant content that check can't see: a DTC code such as "U0100" is invisible to
+        that regex (every digit is preceded by a letter), and directive clauses like the
+        rest-stop instruction have no preservation check at all otherwise. Mirrors
+        _message_and_actions's own branch precedence so the two can never disagree about
+        which fact set backs the approved reply being validated against.
+        """
+
+        route = resolution.route
+        state = snapshot.state
+
+        if route == "assistant.missing_context" or not snapshot.state_is_fresh:
+            return ()
+        if safety.emergency_candidate:
+            return ()
+        if route in {"safety.driver_fatigue", "safety.user_discomfort_check"}:
+            return ("Hãy giảm tốc và dừng ở vị trí an toàn sớm nhất có thể để nghỉ ngơi.",)
+        if route == "vehicle.fault_concern":
+            mentioned_code = resolution.mentioned_dtc_code
+            if mentioned_code is not None:
+                active_match = ContextAwareAssistant._find_dtc_by_code(state, mentioned_code)
+                if active_match is not None:
+                    return (active_match.code, _DTC_SEVERITY_GUIDANCE[active_match.severity])
+                catalog_entry = dtc_catalog.lookup(mentioned_code)
+                if catalog_entry is not None:
+                    return (catalog_entry.code, catalog_entry.meaning)
+                # Unknown-to-catalog case: the code itself must still survive verbatim
+                # so the narrator can't silently claim a different code is unavailable.
+                return (mentioned_code,)
+            dtc = ContextAwareAssistant._primary_dtc(state)
+            if dtc is None:
+                return ()
+            return (dtc.code, _DTC_SEVERITY_GUIDANCE[dtc.severity])
+        if route == "assistant.vehicle_status" and safety.risk.level != "LOW":
+            return (safety.risk.title,)
+        return ()
 
     @staticmethod
     def _fatigue_situation(state: VehicleState, safety: SafetyEvaluation) -> str:

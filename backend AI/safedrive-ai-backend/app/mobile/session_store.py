@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -27,30 +28,54 @@ from app.api.schemas.mobile import (
     VehicleState,
 )
 from app.mobile.assistant import AssistantPlan, ContextAwareAssistant
-from app.mobile.context import ContextSnapshot, MobileContextBuilder
+from app.mobile.context import ContextPack, ContextSnapshot, MobileContextBuilder
 from app.mobile.emergency import RescueBriefBuilder, SimulatedRescueGateway
 from app.mobile.emergency_reasoner import EmergencyLLMReasoner
-from app.mobile.intent import IntentResolution
+from app.mobile.intent import DTC_CODE_PATTERN, IntentResolution
 from app.mobile.llm import OllamaIntentClassifier, OllamaNarrator
 from app.mobile.safety import SafetyEvaluation, SafetyRiskEngine
 from app.mobile.state_bridge import MobileStateBridge
+
+# A code-like token (2-5 letters immediately followed by 2-5 digits, e.g. "XYZ123",
+# "ABX900") that a driver asks about in a message the deterministic router couldn't
+# otherwise categorize. Deliberately narrow: requires letters-then-digits with no
+# separator, which is uncommon in ordinary Vietnamese/English sentences but is exactly
+# the shape of a made-up or misremembered technical code. DTC-shaped tokens
+# ([PBCU]+4 hex, always a single leading letter) don't match this pattern's {2,5}
+# leading-letter requirement and are excluded explicitly besides, since those are
+# already handled by the dedicated vehicle.fault_concern/DTC_CODE_PATTERN path.
+_UNVERIFIED_CODE_TOKEN_PATTERN = re.compile(r"\b[A-Za-z]{2,5}[0-9]{2,5}\b")
 
 SESSION_TTL_MS = 60 * 60 * 1_000
 VERIFYING_EVIDENCE_MS = 5_000
 AWAITING_USER_RESPONSE_MS = 15_000
 FINAL_COUNTDOWN_MS = 10_000
 _TERMINAL_EMERGENCY_STATES = frozenset({"CANCELLED", "SOS_SIMULATED_SENT"})
-# Deliberately excludes every route with a grounded vehicle fact or a
-# confirmable action (assistant.vehicle_status, vehicle.fault_concern,
-# comfort.too_hot, climate.*): HVAC control, status queries, fatigue and
-# SOS wording must stay fully deterministic with no LLM call at all, not
-# merely LLM-narrated-but-guarded. Only the routes below have no vehicle
-# fact or action to preserve, so a wording rewrite carries no safety risk.
+# Risk level and emergency-candidate status (both checked in _can_narrate) already gate
+# narration for every route below to LOW/MEDIUM, non-emergency turns -- HIGH/CRITICAL
+# replies are never narrated regardless of route. safety.emergency_request is the one
+# route additionally excluded here, independent of risk level: it's the SOS-simulation
+# offer/countdown, the single most safety-critical route, and wording for it stays fully
+# deterministic no matter what. Every other route's grounded facts/actions are decided
+# and bound to the session before narration ever runs (see answer_assistant), and the
+# narrator's guardrail (number-grounding plus, for DTC/fatigue/status,
+# ContextAwareAssistant.required_narration_snippets) preserves them verbatim -- so a
+# wording rewrite for these routes carries no safety risk beyond what the guardrail
+# already enforces.
 _NARRATABLE_ROUTES = frozenset(
     {
         "assistant.general",
         "assistant.clarify",
+        "assistant.vehicle_status",
+        "assistant.missing_context",
         "companion.conversation",
+        "safety.driver_fatigue",
+        "safety.user_discomfort_check",
+        "climate.set_temperature",
+        "climate.enable_default",
+        "climate.invalid_temperature",
+        "comfort.too_hot",
+        "vehicle.fault_concern",
     }
 )
 
@@ -491,22 +516,50 @@ class MobileSessionStore:
         # deterministic and is never delayed or softened by model generation.
         if self._narrator is None or not self._can_narrate(plan.resolution.route, safety):
             return response
-        narrated = await self._narrator.rewrite_grounded_reply(
-            user_text=request.text,
-            approved_reply=response.message.text,
-            context_pack=plan.context_pack,
-            risk_level=safety.risk.level,
-            risk_reasons=tuple(safety.risk.reasonCodes),
-            allowed_actions=[
-                {
-                    "type": action.type,
-                    "title": action.title,
-                    "requiresConfirmation": action.requiresConfirmation,
-                    "hvacTargetTemperatureC": action.hvacTargetTemperatureC,
-                }
-                for action in response.message.actions
-            ],
-        )
+        if plan.resolution.route == "assistant.general":
+            unverified_token = self._find_unverified_code_token(request.text, plan.context_pack)
+            if unverified_token is not None:
+                # Deterministic intercept, no LLM call at all: a live 7B model was
+                # observed fabricating a plausible-sounding technical explanation for
+                # exactly this shape of input (see docs/TEST_EVIDENCE.md). Prompt
+                # wording alone was not treated as sufficient for this case.
+                safe_text = (
+                    f'Tôi không có dữ liệu đã xác minh về mã "{unverified_token}", nên không thể '
+                    "giải thích chính xác. Hãy kiểm tra lại mã hoặc cung cấp thông tin từ hệ thống "
+                    "chẩn đoán xe."
+                )
+                return response.model_copy(
+                    update={"message": response.message.model_copy(update={"text": safe_text})}
+                )
+            # The true catch-all -- nothing matched a known category -- gets a genuine
+            # free-form answer-or-redirect instead of a rewrite of an already-fixed reply.
+            narrated = await self._narrator.answer_open_query(
+                user_text=request.text,
+                deterministic_fallback=response.message.text,
+                context_pack=plan.context_pack,
+                risk_level=safety.risk.level,
+                risk_reasons=tuple(safety.risk.reasonCodes),
+            )
+        else:
+            narrated = await self._narrator.rewrite_grounded_reply(
+                user_text=request.text,
+                approved_reply=response.message.text,
+                context_pack=plan.context_pack,
+                risk_level=safety.risk.level,
+                risk_reasons=tuple(safety.risk.reasonCodes),
+                allowed_actions=[
+                    {
+                        "type": action.type,
+                        "title": action.title,
+                        "requiresConfirmation": action.requiresConfirmation,
+                        "hvacTargetTemperatureC": action.hvacTargetTemperatureC,
+                    }
+                    for action in response.message.actions
+                ],
+                required_verbatim_snippets=self._assistant.required_narration_snippets(
+                    plan.resolution, snapshot, safety
+                ),
+            )
         if narrated is None:
             # An LLM call was actually attempted for this route (unlike the early return
             # above, which never attempts one at all) but was unreachable, timed out, or
@@ -530,6 +583,27 @@ class MobileSessionStore:
         )
 
     @staticmethod
+    def _find_unverified_code_token(text: str, context_pack: ContextPack) -> str | None:
+        """A code-like token (letters immediately followed by digits, e.g. "XYZ123")
+        the driver asks about that appears nowhere in the grounded context. Returns the
+        canonicalized (uppercase) token, or ``None`` if the text contains no such token.
+
+        DTC-shaped tokens are excluded: those are already intercepted earlier by
+        ``IntentResolver`` and answered by the dedicated, catalog-aware
+        ``vehicle.fault_concern`` path, never reaching ``assistant.general`` at all.
+        """
+
+        context_blob = repr(context_pack).upper()
+        for match in _UNVERIFIED_CODE_TOKEN_PATTERN.finditer(text):
+            token = match.group(0)
+            if DTC_CODE_PATTERN.fullmatch(token):
+                continue
+            if token.upper() in context_blob:
+                continue
+            return token.upper()
+        return None
+
+    @staticmethod
     def _can_narrate(route: str, safety: SafetyEvaluation) -> bool:
         return (
             not safety.emergency_candidate
@@ -539,16 +613,23 @@ class MobileSessionStore:
 
     @staticmethod
     def _can_classify(resolution: IntentResolution, safety: SafetyEvaluation) -> bool:
-        """Only when the deterministic router truly could not decide -- both
-        ``IntentResolver.resolve()``'s top-level ``assistant.general`` fallback and
-        ``_resolve_ambiguous``'s own final ``assistant.clarify`` fallback set
-        ``needs_clarification=True``; nothing else does. Never during an active
-        emergency or already-HIGH/CRITICAL risk, mirroring _can_narrate's gate -- in
-        both of those cases `_message_and_actions` has already produced the
-        emergency-aware or risk-aware deterministic text regardless of route, and a
-        reclassification must never discard that."""
+        """Only for ``_resolve_ambiguous``'s own final ``assistant.clarify`` fallback --
+        text that plausibly matched a safety-relevant category (fatigue/comfort/vehicle-
+        concern keywords) but couldn't be disambiguated with confidence. Deliberately
+        excludes ``IntentResolver.resolve()``'s top-level ``assistant.general`` catch-all
+        (nothing matched at all): live evidence showed the classifier, forced to pick
+        from a closed label set, will sometimes commit to an unrelated-but-superficially-
+        plausible label (e.g. assistant.vehicle_status) for genuinely off-topic text
+        instead of admitting nothing fits -- silently routing it to an irrelevant
+        deterministic template and defeating OllamaNarrator.answer_open_query's whole
+        purpose. assistant.general goes straight to that open-answer path instead; only
+        assistant.clarify's genuinely safety-adjacent ambiguity is worth the classifier's
+        judgment call. Never during an active emergency or already-HIGH/CRITICAL risk,
+        mirroring _can_narrate's gate -- in both of those cases `_message_and_actions`
+        has already produced the emergency-aware or risk-aware deterministic text
+        regardless of route, and a reclassification must never discard that."""
         return (
-            resolution.needs_clarification
+            resolution.route == "assistant.clarify"
             and not safety.emergency_candidate
             and safety.risk.level not in {"HIGH", "CRITICAL"}
         )

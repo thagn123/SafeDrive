@@ -11,7 +11,9 @@
 - [x] Docker/deployment files — `Dockerfile`, `docker-compose.yml`, `.env.example`, `docs/DEPLOYMENT.md`
 - [ ] Video demo — not produced in this pass (no screen/audio recording tooling available here)
 - [ ] Slide deck — not produced in this pass
-- [ ] Final commit/tag — nothing has been committed; all changes are currently uncommitted working-tree edits (see `git status`)
+- [ ] Final commit/tag — HEAD is at `f3577ae` (2 commits total); the LLM-narration-quality work and
+      this audit's fixes are currently uncommitted working-tree edits on top of that (see
+      `git status`) and still need a final commit before packaging
 - [ ] CarSky upload/deployment — not attempted (no platform access)
 
 No credentials are included in this checklist or any file it references.

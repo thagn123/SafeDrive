@@ -583,27 +583,300 @@ async def test_hvac_confirmation_is_invalidated_when_a_decision_input_changes() 
         assert "not issued" in rejected.json()["message"].lower()
 
 
-@pytest.mark.asyncio
-async def test_hvac_and_status_routes_never_call_the_llm_even_when_ollama_is_configured(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """HVAC control, vehicle status and fault explanations must stay fully
-    deterministic with no LLM call at all -- not merely LLM-narrated-but-guarded --
-    even when an Ollama narrator is configured and reachable. Only routes with no
-    grounded vehicle fact or action (general/clarify/companion chit-chat) may be
-    narrated (see `_NARRATABLE_ROUTES` in app/mobile/session_store.py)."""
+def _fake_narrator_echoing_approved_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A minimal fake Ollama /api/chat that behaves like a well-behaved real narrator:
+    echoes the request's own APPROVED_REPLY verbatim with a short natural Vietnamese
+    prefix, so it always passes the number-grounding guardrail regardless of which
+    route/state a test exercises, without hand-computing each route's exact numbers."""
 
-    # The app's own test client is also an httpx.AsyncClient (over ASGITransport), so the
-    # fake must only intercept the narrator's Ollama call and pass every other request
-    # (session start, state update, ...) through to the real implementation.
     original_post = httpx.AsyncClient.post
 
-    # The companion.conversation template now weaves in real grounded facts (speed,
-    # cabin temperature, driving duration) so the narrator has genuine context to work
-    # with instead of a fact-free line -- this fake response must preserve those same
-    # numbers (matching the fresh_state set up below) or the narrator's own
-    # number-preservation guard would correctly reject it and fall back to the
-    # deterministic reply, same as it would for a real model that dropped a fact.
+    async def fake_post(self: httpx.AsyncClient, url: object, *args: object, **kwargs: object) -> httpx.Response:
+        if str(url).endswith("/api/chat"):
+            user_content = kwargs["json"]["messages"][1]["content"]  # type: ignore[index]
+            approved = user_content.split("APPROVED_REPLY:\n", 1)[1].split("\n\nGROUNDED_CONTEXT_JSON:")[0]
+            return httpx.Response(
+                200,
+                json={"message": {"content": f"Rõ rồi, {approved}"}},
+                request=httpx.Request("POST", str(url)),
+            )
+        return await original_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+
+@pytest.mark.asyncio
+async def test_dtc_shaped_code_question_routes_to_fault_concern_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Competition-audit regression, full stack: "Ma U0100 nghia la gi?" matches no
+    vehicle.fault_concern keyword, so before the DTC-code-shape fix it fell to
+    assistant.general and could be answered (or mis-redirected) without the route's
+    severity-guidance guardrail ever running. Proves the fix end-to-end: MEDIUM
+    severity narrates with the code preserved; HIGH severity blocks the LLM entirely
+    and the client-supplied unsafe recommendation never reaches the reply."""
+
+    _fake_narrator_echoing_approved_reply(monkeypatch)
+
+    settings = Settings(
+        environment="test",
+        active_profile="DMS_DEMO",
+        safedrive_api_key=SecretStr("canonical-api-key"),
+        llm_provider="ollama",
+    )
+    app = create_app(settings=settings)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        started = await client.post("/api/v1/sessions/start", json=session_payload())
+        session_id = started.json()["sessionId"]
+
+        medium_state = state_payload(session_id)
+        medium_state["state"]["activeDtcs"] = [
+            {
+                "code": "U0100",
+                "title": "Controller communication fault",
+                "description": "A simulated active diagnostic fault.",
+                "severity": "MEDIUM",
+                "recommendation": "Ban co the tiep tuc lai xe binh thuong",
+                "updatedAtMs": medium_state["state"]["updatedAtMs"],
+            }
+        ]
+        medium_state["driverSupportSignals"]["userReportedFatigue"] = False
+        assert (await client.post("/api/v1/state/update", json=medium_state)).status_code == 200
+
+        medium = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-dtc-code-medium",
+                "text": "Ma U0100 nghia la gi?",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        medium_body = medium.json()
+        assert medium_body["message"]["route"] == "vehicle.fault_concern"
+        assert medium_body["llmUsed"] is True
+        assert "U0100" in medium_body["message"]["text"]
+
+        high_state = state_payload(session_id)
+        high_state["state"]["activeDtcs"] = [
+            {
+                "code": "U0100",
+                "title": "Controller communication fault",
+                "description": "A simulated active diagnostic fault.",
+                "severity": "HIGH",
+                "recommendation": "Ban co the tiep tuc lai xe binh thuong",
+                "updatedAtMs": high_state["state"]["updatedAtMs"],
+            }
+        ]
+        high_state["driverSupportSignals"]["userReportedFatigue"] = False
+        assert (await client.post("/api/v1/state/update", json=high_state)).status_code == 200
+
+        high = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-dtc-code-high",
+                "text": "Ma U0100 nghia la gi?",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        high_body = high.json()
+        assert high_body["message"]["route"] == "vehicle.fault_concern"
+        assert high_body["llmUsed"] is False
+        assert not (high_body["model"] or "").startswith("ollama/")
+        assert "U0100" in high_body["message"]["text"]
+        assert "Ban co the tiep tuc lai xe binh thuong" not in high_body["message"]["text"]
+        assert "Không nên tiếp tục hành trình dài" in high_body["message"]["text"]
+
+
+@pytest.mark.asyncio
+async def test_hvac_and_status_routes_are_narrated_when_risk_is_low_or_medium(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HVAC control and vehicle-status routes now go through the same narrate-then-
+    guardrail path as chit-chat once risk is LOW/MEDIUM -- widened beyond the old
+    3-route allow-list because the deterministic action/fact is already bound to the
+    session before narration ever runs (see MobileSessionStore.answer_assistant), and
+    the narrator's number-grounding guardrail still preserves every fact from the
+    approved reply exactly. See `_NARRATABLE_ROUTES` in app/mobile/session_store.py."""
+
+    _fake_narrator_echoing_approved_reply(monkeypatch)
+
+    settings = Settings(
+        environment="test",
+        active_profile="DMS_DEMO",
+        safedrive_api_key=SecretStr("canonical-api-key"),
+        llm_provider="ollama",
+    )
+    app = create_app(settings=settings)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        started = await client.post("/api/v1/sessions/start", json=session_payload())
+        session_id = started.json()["sessionId"]
+        fresh_state = state_payload(session_id)
+        fresh_state["state"].update(
+            {"cabinTemperatureC": 25.0, "continuousDrivingMinutes": 20, "energyPercent": 74}
+        )
+        fresh_state["driverSupportSignals"]["userReportedFatigue"] = False
+        assert (await client.post("/api/v1/state/update", json=fresh_state)).status_code == 200
+
+        hvac = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-hvac-llm-ok",
+                "text": "Bat dieu hoa",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        assert hvac.status_code == 200
+        hvac_body = hvac.json()
+        assert hvac_body["model"] == "ollama/qwen2.5:7b-instruct-q4_K_M"
+        assert hvac_body["llmUsed"] is True
+        assert "Rõ rồi" in hvac_body["message"]["text"]
+        assert "22" in hvac_body["message"]["text"]
+        # The confirmable action itself is untouched by narration -- still exactly the
+        # deterministic SET_HVAC_TEMPERATURE action; only the wording changed.
+        assert hvac_body["message"]["actions"][0]["type"] == "SET_HVAC_TEMPERATURE"
+
+        status = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-status-llm-ok",
+                "text": "Tinh trang xe the nao",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        assert status.status_code == 200
+        status_body = status.json()
+        assert status_body["model"] == "ollama/qwen2.5:7b-instruct-q4_K_M"
+        assert status_body["llmUsed"] is True
+        assert "72 km/h" in status_body["message"]["text"]
+
+
+@pytest.mark.asyncio
+async def test_hvac_and_status_routes_stay_deterministic_at_high_or_critical_risk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even though HVAC/status/DTC routes are now narratable in principle,
+    _can_narrate's risk-level gate must still block every LLM call the moment risk is
+    HIGH/CRITICAL -- the real remaining guarantee once route membership alone no
+    longer decides it. Forces HIGH via a HIGH-severity DTC (vehicle.fault_concern) and
+    CRITICAL via engine overheat (assistant.vehicle_status), with Ollama configured
+    and reachable throughout, to prove the exclusion is risk-driven, not accidental."""
+
+    seen_chat_calls = 0
+    original_post = httpx.AsyncClient.post
+
+    async def fake_post(self: httpx.AsyncClient, url: object, *args: object, **kwargs: object) -> httpx.Response:
+        nonlocal seen_chat_calls
+        if str(url).endswith("/api/chat"):
+            seen_chat_calls += 1
+            return httpx.Response(
+                200,
+                json={"message": {"content": "Đây là câu trả lời không nên xuất hiện."}},
+                request=httpx.Request("POST", str(url)),
+            )
+        return await original_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    settings = Settings(
+        environment="test",
+        active_profile="DMS_DEMO",
+        safedrive_api_key=SecretStr("canonical-api-key"),
+        llm_provider="ollama",
+    )
+    app = create_app(settings=settings)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        started = await client.post("/api/v1/sessions/start", json=session_payload())
+        session_id = started.json()["sessionId"]
+
+        dtc_state = state_payload(session_id)
+        dtc_state["state"]["activeDtcs"] = [
+            {
+                "code": "U0100",
+                "title": "Controller communication fault",
+                "description": "A simulated active diagnostic fault.",
+                "severity": "HIGH",
+                "recommendation": "Ban co the tiep tuc lai xe binh thuong",
+                "updatedAtMs": dtc_state["state"]["updatedAtMs"],
+            }
+        ]
+        dtc_state["driverSupportSignals"]["userReportedFatigue"] = False
+        assert (await client.post("/api/v1/state/update", json=dtc_state)).status_code == 200
+        dtc = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-dtc-high-no-llm",
+                "text": "Bao loi gi vay",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        assert dtc.status_code == 200
+        dtc_body = dtc.json()
+        assert dtc_body["llmUsed"] is False
+        assert not (dtc_body["model"] or "").startswith("ollama/")
+        assert "U0100" in dtc_body["message"]["text"]
+
+        overheat_state = state_payload(session_id)
+        overheat_state["state"]["engineTemperatureC"] = 118.0
+        overheat_state["driverSupportSignals"]["userReportedFatigue"] = False
+        assert (await client.post("/api/v1/state/update", json=overheat_state)).status_code == 200
+        status = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-status-critical-no-llm",
+                "text": "Tinh trang xe the nao",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        assert status.status_code == 200
+        status_body = status.json()
+        assert status_body["llmUsed"] is False
+        assert not (status_body["model"] or "").startswith("ollama/")
+
+    assert seen_chat_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_companion_chat_still_narrates_as_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression check: companion.conversation, always narratable, is unaffected by
+    widening _NARRATABLE_ROUTES to other routes."""
+
+    original_post = httpx.AsyncClient.post
+
     async def fake_post(self: httpx.AsyncClient, url: object, *args: object, **kwargs: object) -> httpx.Response:
         if str(url).endswith("/api/chat"):
             return httpx.Response(
@@ -635,41 +908,6 @@ async def test_hvac_and_status_routes_never_call_the_llm_even_when_ollama_is_con
         fresh_state["driverSupportSignals"]["userReportedFatigue"] = False
         assert (await client.post("/api/v1/state/update", json=fresh_state)).status_code == 200
 
-        hvac = await client.post(
-            "/api/v1/assistant/query",
-            json={
-                "sessionId": session_id,
-                "requestId": "request-hvac-no-llm",
-                "text": "Bat dieu hoa",
-                "source": "VOICE",
-                "locale": "vi-VN",
-                "clientAttemptOf": None,
-                "context": {"stateVersion": 1, "screen": "assistant"},
-            },
-        )
-        assert hvac.status_code == 200
-        assert not (hvac.json()["model"] or "").startswith("ollama/")
-        assert "cùng bạn" not in hvac.json()["message"]["text"]
-
-        status = await client.post(
-            "/api/v1/assistant/query",
-            json={
-                "sessionId": session_id,
-                "requestId": "request-status-no-llm",
-                "text": "Tinh trang xe the nao",
-                "source": "VOICE",
-                "locale": "vi-VN",
-                "clientAttemptOf": None,
-                "context": {"stateVersion": 1, "screen": "assistant"},
-            },
-        )
-        assert status.status_code == 200
-        assert not (status.json()["model"] or "").startswith("ollama/")
-        assert "cùng bạn" not in status.json()["message"]["text"]
-
-        # Companion chit-chat has no confirmable action to preserve (unlike HVAC/status),
-        # so it remains narratable -- proves the exclusion above is route-specific, not a
-        # blanket "narrator never fires" wiring failure.
         chat = await client.post(
             "/api/v1/assistant/query",
             json={
@@ -731,20 +969,23 @@ async def test_response_envelope_reports_llm_used_and_fallback_metadata(
         fresh_state["driverSupportSignals"]["userReportedFatigue"] = False
         assert (await client.post("/api/v1/state/update", json=fresh_state)).status_code == 200
 
-        # Case 1: never-attempted -- HVAC/status stay deterministic by design.
-        status = await client.post(
+        # Case 1: never-attempted -- safety.emergency_request is the one route excluded
+        # from _NARRATABLE_ROUTES regardless of risk level (SOS wording always stays
+        # deterministic), unlike HVAC/status/DTC/fatigue which are now risk-gated only.
+        sos = await client.post(
             "/api/v1/assistant/query",
             json={
                 "sessionId": session_id,
                 "requestId": "meta-never-attempted",
-                "text": "Tinh trang xe the nao",
+                "text": "Toi can cuu ho",
                 "source": "VOICE",
                 "locale": "vi-VN",
                 "clientAttemptOf": None,
                 "context": {"stateVersion": 1, "screen": "assistant"},
             },
         )
-        body = status.json()
+        body = sos.json()
+        assert body["message"]["route"] == "safety.emergency_request"
         assert body["llmUsed"] is False
         assert body["fallback"] is False
         assert body["fallbackReason"] is None
@@ -914,12 +1155,19 @@ def _patch_ollama_chat(monkeypatch: pytest.MonkeyPatch, content: str | None, *, 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
 
 
-def _fake_chat_by_system_prompt(monkeypatch: pytest.MonkeyPatch, *, classify_label: str) -> list[str]:
+def _fake_chat_by_system_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    classify_label: str,
+    narrator_content: str = "Tôi luôn ở đây để trò chuyện cùng bạn.",
+) -> list[str]:
     """Distinguishes the classifier's call (system prompt starts with "Classify the
-    driver's message") from the narrator's call (starts with "You are SafeDrive AI
-    Companion") on the same intercepted /api/chat endpoint, since a reclassified route
-    that also happens to be narratable would otherwise trigger both in one request.
-    Returns the list of system prompts actually seen, for call-count assertions."""
+    driver's message") from a narrator call (anything else) on the same intercepted
+    /api/chat endpoint, since a reclassified route that also happens to be narratable
+    now legitimately triggers both in one request. Returns the list of system prompts
+    actually seen, for call-count/ordering assertions. ``narrator_content`` lets a
+    caller supply a reply grounded in its own fixture's numbers so the narrator's own
+    number-preservation guardrail doesn't reject it and silently fall back."""
 
     original_post = httpx.AsyncClient.post
     seen_system_prompts: list[str] = []
@@ -936,7 +1184,7 @@ def _fake_chat_by_system_prompt(monkeypatch: pytest.MonkeyPatch, *, classify_lab
                 )
             return httpx.Response(
                 200,
-                json={"message": {"content": "Tôi luôn ở đây để trò chuyện cùng bạn."}},
+                json={"message": {"content": narrator_content}},
                 request=httpx.Request("POST", str(url)),
             )
         return await original_post(self, url, *args, **kwargs)
@@ -946,17 +1194,29 @@ def _fake_chat_by_system_prompt(monkeypatch: pytest.MonkeyPatch, *, classify_lab
 
 
 @pytest.mark.asyncio
-async def test_unmatched_text_can_be_reclassified_by_advisory_llm_into_a_fixed_template(
+async def test_genuinely_ambiguous_clarify_can_be_reclassified_by_advisory_llm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A message that matches no deterministic keyword at all lands on
-    IntentResolver's `assistant.general` fallback (needs_clarification=True). The
-    advisory OllamaIntentClassifier may reclassify it into a different label, but only
-    ever by selecting an existing ContextAwareAssistant template -- proving the label
-    can't invent wording or an action (app/mobile/llm.py's OllamaIntentClassifier
-    docstring, and MobileSessionStore._can_classify's gate)."""
+    """A message that plausibly matches a safety-relevant category but can't be
+    disambiguated confidently (fatigue vs. cabin vs. vehicle-concern keywords) lands on
+    IntentResolver._resolve_ambiguous's `assistant.clarify` fallback. The advisory
+    OllamaIntentClassifier may reclassify *that* into a different label, but only ever
+    by selecting an existing ContextAwareAssistant template -- proving the label can't
+    invent wording or an action (app/mobile/llm.py's OllamaIntentClassifier docstring,
+    and MobileSessionStore._can_classify's gate, now scoped to assistant.clarify only --
+    see test_classifier_never_runs_for_the_general_catchall for why assistant.general
+    is deliberately excluded). assistant.vehicle_status is in _NARRATABLE_ROUTES, so
+    once reclassified the narrator also runs -- this proves the two calls chain
+    correctly (classifier picks the route, narrator words it) rather than the
+    classifier's own call ever writing user-facing text itself."""
 
-    seen_prompts = _fake_chat_by_system_prompt(monkeypatch, classify_label="assistant.vehicle_status")
+    seen_prompts = _fake_chat_by_system_prompt(
+        monkeypatch,
+        classify_label="assistant.vehicle_status",
+        narrator_content=(
+            "Tôi luôn ở đây cùng bạn. Xe đang chạy 60 km/h, cabin 25 độ, bạn đã lái được 20 phút rồi."
+        ),
+    )
 
     app = create_app(settings=_ollama_settings())
     async with (
@@ -977,7 +1237,7 @@ async def test_unmatched_text_can_be_reclassified_by_advisory_llm_into_a_fixed_t
             json={
                 "sessionId": session_id,
                 "requestId": "request-reclassify",
-                "text": "Ban co the hat cho toi nghe mot bai khong",
+                "text": "Toi thay hoi kho chiu",
                 "source": "VOICE",
                 "locale": "vi-VN",
                 "clientAttemptOf": None,
@@ -986,14 +1246,135 @@ async def test_unmatched_text_can_be_reclassified_by_advisory_llm_into_a_fixed_t
         )
         body = result.json()
 
-    assert body["model"] == "ollama-intent/qwen2.5:7b-instruct-q4_K_M"
+    # Final model reflects the narrator (the last thing to touch the reply), not the
+    # classifier, even though the classifier ran first and picked the route.
+    assert body["model"] == "ollama/qwen2.5:7b-instruct-q4_K_M"
     assert body["message"]["route"] == "assistant.vehicle_status"
+    assert body["llmUsed"] is True
     assert "60 km/h" in body["message"]["text"]
     assert "20 phút" in body["message"]["text"]
-    # assistant.vehicle_status is not in _NARRATABLE_ROUTES, so only the classifier's
-    # call should have run -- proves this doesn't silently chain into a second,
-    # separate narrator call once the route changes.
+    assert len(seen_prompts) == 2
+    assert seen_prompts[0].startswith("Classify the driver's message")
+    assert not seen_prompts[1].startswith("Classify the driver's message")
+
+
+@pytest.mark.asyncio
+async def test_classifier_never_runs_for_the_general_catchall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for real evidence found during audit: given a closed label set, the
+    classifier will sometimes commit to an unrelated-but-superficially-plausible label
+    (e.g. assistant.vehicle_status) for genuinely off-topic text ("Ai la tong thong My")
+    instead of admitting nothing fits -- silently routing an off-topic question to an
+    irrelevant deterministic template and defeating answer_open_query's whole purpose.
+    _can_classify is scoped to assistant.clarify only; assistant.general's true
+    catch-all must never reach the classifier at all, proven here by asserting only one
+    /api/chat call happens (the narrator's answer_open_query), never a classify-shaped
+    one, no matter what label a classifier would have picked."""
+
+    seen_prompts = _fake_chat_by_system_prompt(
+        monkeypatch,
+        classify_label="assistant.vehicle_status",
+        narrator_content="SafeDrive chỉ hỗ trợ các câu hỏi liên quan đến việc lái xe của bạn thôi nhé.",
+    )
+
+    app = create_app(settings=_ollama_settings())
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        started = await client.post("/api/v1/sessions/start", json=session_payload())
+        session_id = started.json()["sessionId"]
+        fresh_state = state_payload(session_id)
+        fresh_state["state"].update(
+            {"cabinTemperatureC": 25.0, "continuousDrivingMinutes": 20, "energyPercent": 74}
+        )
+        fresh_state["driverSupportSignals"]["userReportedFatigue"] = False
+        assert (await client.post("/api/v1/state/update", json=fresh_state)).status_code == 200
+
+        result = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-general-not-classified",
+                "text": "Ai la tong thong My",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        body = result.json()
+
+    assert body["message"]["route"] == "assistant.general"
+    assert "khó chịu trong cabin" not in body["message"]["text"]
     assert len(seen_prompts) == 1
+    assert not seen_prompts[0].startswith("Classify the driver's message")
+
+
+@pytest.mark.asyncio
+async def test_unverified_code_token_never_reaches_the_llm_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for the live hallucination found during audit: OllamaNarrator.answer_open_query
+    fabricated a plausible-sounding explanation for "XYZ123" (a made-up, non-DTC-shaped
+    token) even after the system prompt explicitly forbade it. The fix is a deterministic
+    intercept in MobileSessionStore.answer_assistant, BEFORE any narration call --
+    proven here by asserting the fake /api/chat endpoint is never hit at all (not "hit
+    and its output rejected"), so there is zero chance of that class of hallucination
+    reaching the client regardless of what any future model version might generate."""
+
+    seen_chat_calls = 0
+    original_post = httpx.AsyncClient.post
+
+    async def fake_post(self: httpx.AsyncClient, url: object, *args: object, **kwargs: object) -> httpx.Response:
+        nonlocal seen_chat_calls
+        if str(url).endswith("/api/chat"):
+            seen_chat_calls += 1
+            return httpx.Response(
+                200,
+                json={"message": {"content": "XYZ123 là một mã lỗi giả lập."}},
+                request=httpx.Request("POST", str(url)),
+            )
+        return await original_post(self, url, *args, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    app = create_app(settings=_ollama_settings())
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        started = await client.post("/api/v1/sessions/start", json=session_payload())
+        session_id = started.json()["sessionId"]
+        fresh_state = state_payload(session_id)
+        fresh_state["state"].update(
+            {"cabinTemperatureC": 25.0, "continuousDrivingMinutes": 20, "energyPercent": 74}
+        )
+        fresh_state["driverSupportSignals"]["userReportedFatigue"] = False
+        assert (await client.post("/api/v1/state/update", json=fresh_state)).status_code == 200
+
+        result = await client.post(
+            "/api/v1/assistant/query",
+            json={
+                "sessionId": session_id,
+                "requestId": "request-unverified-token",
+                "text": "XYZ123 nghia la gi?",
+                "source": "VOICE",
+                "locale": "vi-VN",
+                "clientAttemptOf": None,
+                "context": {"stateVersion": 1, "screen": "assistant"},
+            },
+        )
+        body = result.json()
+
+    assert body["message"]["route"] == "assistant.general"
+    assert body["llmUsed"] is False
+    assert body["fallback"] is False
+    assert not (body["model"] or "").startswith("ollama/")
+    assert "XYZ123" in body["message"]["text"]
+    assert "mã lỗi giả lập" not in body["message"]["text"]
+    assert seen_chat_calls == 0
 
 
 @pytest.mark.asyncio
@@ -1001,7 +1382,11 @@ async def test_reclassification_never_runs_during_an_active_emergency(monkeypatc
     """MobileSessionStore._can_classify must refuse to run the classifier while a
     crash/no-response emergency is open, mirroring _can_narrate's own gate -- a
     reclassification must never discard the deterministic emergency-aware text that
-    `_message_and_actions` already produced regardless of route."""
+    `_message_and_actions` already produced regardless of route. Uses text that
+    resolves to assistant.clarify (not assistant.general, which is now excluded from
+    classification for an unrelated reason -- see
+    test_classifier_never_runs_for_the_general_catchall) so this test still genuinely
+    exercises the emergency-candidate gate specifically, not the route-scope gate."""
 
     seen_prompts = _fake_chat_by_system_prompt(monkeypatch, classify_label="companion.conversation")
 
@@ -1013,6 +1398,8 @@ async def test_reclassification_never_runs_during_an_active_emergency(monkeypatc
         started = await client.post("/api/v1/sessions/start", json=session_payload())
         session_id = started.json()["sessionId"]
         crash_state = state_payload(session_id, crash=True, passenger="NO_RESPONSE")
+        crash_state["state"]["continuousDrivingMinutes"] = 20
+        crash_state["driverSupportSignals"]["userReportedFatigue"] = False
         assert (await client.post("/api/v1/state/update", json=crash_state)).status_code == 200
 
         result = await client.post(
@@ -1020,7 +1407,7 @@ async def test_reclassification_never_runs_during_an_active_emergency(monkeypatc
             json={
                 "sessionId": session_id,
                 "requestId": "request-emergency-no-reclassify",
-                "text": "Ban co the hat cho toi nghe mot bai khong",
+                "text": "Toi thay hoi kho chiu",
                 "source": "VOICE",
                 "locale": "vi-VN",
                 "clientAttemptOf": None,

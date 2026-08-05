@@ -20,7 +20,7 @@ oversight.
 | POST | `/api/v1/sessions/start` | Start a session (Demo or Remote) |
 | POST | `/api/v1/state/update` | Push a vehicle-state snapshot; returns `riskAssessment` computed synchronously, before any LLM call |
 | GET  | `/api/v1/state?sessionId=` | Read the latest state envelope |
-| POST | `/api/v1/assistant/query` | Text/voice-transcript turn; may narrate via Ollama for a small allow-listed set of routes only |
+| POST | `/api/v1/assistant/query` | Text/voice-transcript turn; may narrate via Ollama when risk is LOW/MEDIUM |
 | POST | `/api/v1/events` | Non-critical events (e.g. `USER_REPORTED_FATIGUE`) |
 | POST | `/api/v1/actions/confirm` | Confirm a server-issued action (only `SET_HVAC_TEMPERATURE` has a real side effect today) |
 | GET  | `/api/v1/emergency/{id}?sessionId=` | Read simulated SOS state machine |
@@ -90,8 +90,9 @@ Added for the competition MVP — additive/optional, so an older client or backe
 }
 ```
 
-- `llmUsed=false, fallback=false` — this route never calls an LLM at all (deterministic by design:
-  DTC, fatigue, HVAC, status).
+- `llmUsed=false, fallback=false` — no LLM call was attempted for this turn. This now depends on
+  risk level, not a fixed route list: any HIGH/CRITICAL reply, and `safety.emergency_request`
+  (SOS) regardless of risk level, are the only cases that never attempt narration at all.
 - `llmUsed=true, fallback=false` — a real Ollama call produced this reply.
 - `llmUsed=false, fallback=true, fallbackReason="provider_unavailable"` — an LLM attempt was made
   for a narratable route (e.g. `companion.conversation`) and failed/was rejected; the deterministic

@@ -228,3 +228,75 @@ def test_invalid_hvac_temperature_explains_the_safe_range_without_creating_an_ac
     assert plan.resolution.requested_temperature_c == 31.0
     assert "16 đến 30 độ C" in plan.response.message.text
     assert plan.response.message.actions == []
+
+
+# --- DTC-code-shaped token recognition (competition-audit regression) ---
+# "Ma U0100 nghia la gi?" previously fell through to assistant.general's catch-all
+# because it matches none of vehicle.fault_concern's natural-language keywords
+# ("bao loi", "ma loi", "dtc", ...). A driver naming a specific code is an
+# unambiguous signal regardless of phrasing, so IntentResolver now recognizes the
+# standard 5-character OBD-II shape directly.
+
+
+def test_dtc_shaped_code_routes_to_fault_concern_even_without_a_keyword() -> None:
+    request = make_request()
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+
+    result = IntentResolver().resolve("Ma U0100 nghia la gi?", snapshot, safety)
+
+    assert result.route == "vehicle.fault_concern"
+    assert result.mentioned_dtc_code == "U0100"
+
+
+def test_dtc_shaped_code_p0300_routes_to_fault_concern() -> None:
+    request = make_request()
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+
+    result = IntentResolver().resolve("Xe bao loi P0300", snapshot, safety)
+
+    assert result.route == "vehicle.fault_concern"
+    assert result.mentioned_dtc_code == "P0300"
+
+
+def test_dtc_shaped_code_b1234_routes_to_fault_concern() -> None:
+    request = make_request()
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+
+    result = IntentResolver().resolve("Ma B1234 la loi gi?", snapshot, safety)
+
+    assert result.route == "vehicle.fault_concern"
+    assert result.mentioned_dtc_code == "B1234"
+
+
+def test_non_dtc_shaped_token_is_not_treated_as_a_confirmed_dtc() -> None:
+    request = make_request()
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+
+    result = IntentResolver().resolve("XYZ123 nghia la gi?", snapshot, safety)
+
+    assert result.mentioned_dtc_code is None
+    assert result.route == "assistant.general"
+
+
+def test_sos_keyword_still_wins_over_a_dtc_shaped_code_in_the_same_message() -> None:
+    request = make_request()
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+
+    result = IntentResolver().resolve("SOS xe bao loi U0100 giup toi", snapshot, safety)
+
+    assert result.route == "safety.emergency_request"

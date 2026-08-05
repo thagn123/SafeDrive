@@ -179,6 +179,193 @@ async def test_ollama_narrator_sends_the_deterministic_tone_for_the_given_risk_l
         assert f"TONE:\n{expected_tone}" in prompt
 
 
+@pytest.mark.asyncio
+async def test_ollama_narrator_rejects_reply_that_drops_a_required_verbatim_snippet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The number-preservation guardrail alone can't see a DTC code (its digits are
+    preceded by a letter, invisible to _NUMBER's regex) or a non-numeric directive
+    clause -- required_verbatim_snippets closes that gap for the routes that need it
+    (see ContextAwareAssistant.required_narration_snippets)."""
+
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Cabin đang 31 độ C và năng lượng còn 18%."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.rewrite_grounded_reply(
+        **narration_kwargs(),
+        required_verbatim_snippets=("U0100", "Không nên tiếp tục hành trình dài"),
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_ollama_narrator_accepts_reply_that_preserves_required_verbatim_snippets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "message": {
+                "content": (
+                    "Xe đang có mã U0100, mức độ trung bình. Cabin đang 31 độ C và năng lượng còn 18%. "
+                    "Bạn có thể tiếp tục lái thận trọng."
+                )
+            }
+        },
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.rewrite_grounded_reply(
+        **narration_kwargs(), required_verbatim_snippets=("U0100",)
+    )
+
+    assert result is not None
+    assert "U0100" in result
+
+
+def open_query_kwargs() -> dict[str, object]:
+    return {
+        "user_text": "Các thông tin về xe",
+        "deterministic_fallback": (
+            "Tôi là trợ lý an toàn khi lái xe, câu hỏi này có thể "
+            "nằm ngoài phạm vi hỗ trợ của tôi. Tôi có thể giúp "
+            "về tình trạng xe, cabin, cảnh báo lỗi hoặc nhu cầu nghỉ ngơi."
+        ),
+        "context_pack": context_pack(),
+        "risk_level": "LOW",
+        "risk_reasons": (),
+    }
+
+
+@pytest.mark.asyncio
+async def test_answer_open_query_accepts_a_vehicle_related_answer_grounded_in_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Xe của bạn còn 18% năng lượng."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    result = await narrator.answer_open_query(**open_query_kwargs())
+
+    assert result == "Xe của bạn còn 18% năng lượng."
+
+
+@pytest.mark.asyncio
+async def test_answer_open_query_rejects_a_hallucinated_number_not_in_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Xe của bạn còn 500 km trước khi hết pin."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    assert await narrator.answer_open_query(**open_query_kwargs()) is None
+
+
+@pytest.mark.asyncio
+async def test_answer_open_query_accepts_an_honest_off_topic_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "message": {
+                "content": (
+                    "Tôi là trợ lý an toàn khi lái xe nên không thể trả lời câu hỏi này. "
+                    "Bạn có muốn hỏi về tình trạng xe không?"
+                )
+            }
+        },
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    kwargs = open_query_kwargs()
+    kwargs["user_text"] = "1+1 bằng mấy"
+    result = await narrator.answer_open_query(**kwargs)
+
+    assert result is not None
+    assert "xe" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_answer_open_query_returns_none_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        raise httpx.ConnectTimeout("no route to host")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    assert await narrator.answer_open_query(**open_query_kwargs()) is None
+
+
+@pytest.mark.asyncio
+async def test_answer_open_query_sends_user_message_and_deterministic_fallback_distinctly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unlike rewrite_grounded_reply's APPROVED_REPLY (a rewrite target), the open-query
+    prompt's DETERMINISTIC_FALLBACK is only a redirect-shape example -- both must reach
+    the model, but the system prompt (not exercised by this test) is what tells it which
+    role each plays."""
+
+    captured: dict[str, object] = {}
+    response = httpx.Response(
+        200,
+        json={"message": {"content": "Xe của bạn còn 18% năng lượng."}},
+        request=httpx.Request("POST", "http://test/api/chat"),
+    )
+
+    async def fake_post(self: httpx.AsyncClient, *args: object, **kwargs: object) -> httpx.Response:
+        captured.update(kwargs["json"])
+        return response
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    narrator = OllamaNarrator("http://127.0.0.1:11434", "test-model", 1.0)
+
+    kwargs = open_query_kwargs()
+    await narrator.answer_open_query(**kwargs)
+
+    prompt = captured["messages"][1]["content"]  # type: ignore[index]
+    assert f"USER_MESSAGE:\n{kwargs['user_text']}" in prompt
+    assert f"DETERMINISTIC_FALLBACK:\n{kwargs['deterministic_fallback']}" in prompt
+
+
 def classify_kwargs() -> dict[str, object]:
     return {
         "user_text": "Xe c\u00f3 v\u1ea5n \u0111\u1ec1 g\u00ec kh\u00f4ng nh\u1ec9",
