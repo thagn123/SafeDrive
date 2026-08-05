@@ -288,6 +288,22 @@ def test_general_catchall_never_pretends_to_know_what_was_asked() -> None:
     assert "mệt" not in text
 
 
+def test_general_catchall_is_a_contextual_fallback_not_a_bare_refusal() -> None:
+    """The catch-all's deterministic text doubles as OllamaNarrator.answer_open_query's
+    fallback whenever the LLM is unavailable or rejects both attempts. It must not be a
+    content-free refusal in that case -- the driver should still get real, current
+    vehicle facts, since many assistant.general hits are genuinely vehicle-related
+    questions no keyword happened to match (e.g. "xe cua toi the nao")."""
+
+    text, _ = plan_reply(
+        "xe cua toi the nao", speed_kmh=60.0, cabin_temperature=25.0
+    )
+
+    assert "60" in text
+    assert "25" in text
+    assert "km/h" in text
+
+
 # --- ContextAwareAssistant.required_narration_snippets: mirrors _message_and_actions ---
 
 

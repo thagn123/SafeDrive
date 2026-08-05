@@ -661,3 +661,124 @@ device, run 3x to account for real model sampling variance:
 
 Before this fix, both phrasings were 0/6 across the same test matrix -- every attempt fell back to
 the generic out-of-scope redirect regardless of how clearly in-scope the question was.
+
+## Deployment-stabilization pass: semantic grounding, Vietnamese reliability, contextual fallbacks (2026-08-05)
+
+Work done on an isolated worktree (`git worktree add`) branched from the verified, pushed
+`claude/final-dtc-grounding` commit `15e8d23`, to avoid colliding with a separate concurrent session
+found actively committing in the shared working directory (see the branch-hygiene note in
+`docs/KNOWN_LIMITATIONS.md`). All commands below ran against that worktree's own venv and its own
+Docker image, built `--no-cache` from this worktree's source only.
+
+### 1. Semantic-aware number grounding (`app/mobile/llm.py`)
+
+The previous fix (immediately above) made `"60"` and `"60.0"` compare equal, but the check still had
+no concept of *which field* a number belonged to -- a narrated "60%" would have been accepted merely
+because 60 appears somewhere in context (e.g. as `speedKmh`), regardless of whether any `*_percent`
+field actually equals 60. `_grounded_values_by_unit`/`_detect_trailing_unit`/`_unit_for_field` now
+derive a unit per `ContextValue.name` from its existing dot/underscore-separated suffix
+(`_kmh`→KMH, `_temperature_c`→CELSIUS, `_percent`→PERCENT, `_minutes`→MINUTES, `_seconds`→SECONDS,
+matched against Vietnamese and English surface forms in the model's raw output) and require a number
+written with a recognized unit to match a context field that actually carries that unit. A number
+with no recognized trailing unit still falls back to the prior unit-agnostic check -- this only ever
+makes grounding *stricter*, never looser. New tests in `tests/test_mobile_llm.py`:
+`test_ollama_narrator_accepts_a_new_context_number_with_its_correct_unit`,
+`test_ollama_narrator_rejects_a_value_grounded_in_the_wrong_semantic_field` (245 min claimed as
+245%, rejected), `test_ollama_narrator_rejects_a_context_value_written_with_the_wrong_unit` (18%
+claimed as 18 minutes, rejected).
+
+### 2. Vietnamese output language validator with one retry (`app/mobile/llm.py`)
+
+Replaced the old guardrail's `_VIETNAMESE_WORD` check (required one of nine hardcoded words --
+fragile: a genuine Vietnamese sentence using none of them would have been wrongly rejected) with
+`_looks_vietnamese_enough`: rejects CJK, and requires at least one genuine Vietnamese diacritic mark
+(reusing the same NFD-decomposition + `unicodedata.category == "Mn"` signal `app/mobile/intent.py`
+already uses for accent-stripping) -- a DTC code or abbreviation embedded in an otherwise-Vietnamese
+sentence carries no diacritics of its own but does not make the check fail, since the surrounding
+Vietnamese words still do. On a language-check failure, `_post_chat_with_language_retry` now retries
+**exactly once** with a stricter Vietnamese instruction appended to the prompt before giving up and
+returning to the deterministic fallback -- never for HIGH/CRITICAL replies, since those never reach
+the narrator at all (`_can_narrate` excludes them before any narrator method is called). Each attempt
+is logged structurally (`app.narration` logger, `event=narration_language_check`,
+fields `language_ok`/`retried`/`fallback_used`, allowlisted in `app/core/logging.py`). New tests:
+`test_looks_vietnamese_enough_*` (5, direct), `test_ollama_narrator_rejects_english_heavy_output_*`,
+`test_ollama_narrator_dtc_code_does_not_cause_a_false_language_rejection`,
+`test_ollama_narrator_retries_once_and_accepts_a_vietnamese_retry_after_a_non_vietnamese_first_attempt`
+(asserts exactly 2 model calls, retry payload has one extra message, retried text is what's used),
+`test_ollama_narrator_retries_at_most_once_when_both_attempts_stay_non_vietnamese` (asserts exactly 2
+calls, never more).
+
+### 3. Contextual deterministic fallback for `assistant.general` (`app/mobile/assistant.py`)
+
+Every other narratable route's deterministic text already cited real context (vehicle status, HVAC,
+fatigue duration, DTC catalog/active state) -- `assistant.general`'s was the one exception, a flat
+"this may be out of scope" line shown even when the driver's message was genuinely vehicle-related
+but phrased in a way no keyword matched. It now leads with a real vehicle-status summary built from
+the current snapshot (speed/cabin temperature/energy), keeping a brief honest scope statement for
+truly unrelated questions. Because this text is also passed as `answer_open_query`'s
+`deterministic_fallback` (shown to the model as a tone/topic example), `_validate_and_normalize`
+gained a `require_approved_numbers` flag (default `True`, unchanged for `rewrite_grounded_reply`) --
+`answer_open_query` passes `False`, since forcing a genuinely different free-form answer to
+mechanically repeat every number from a now-number-bearing example would defeat the point of letting
+the model answer the actual question asked. New tests:
+`test_general_catchall_is_a_contextual_fallback_not_a_bare_refusal` (assistant.py),
+`test_answer_open_query_does_not_require_repeating_every_fallback_number` (llm.py). The two existing
+tests asserting `"nằm ngoài phạm vi hỗ trợ"` presence/absence needed no changes -- the new text keeps
+that exact phrase for the honest-scope sentence.
+
+### 4. Regression + live verification
+
+```
+.venv (system Python 3.12, since the uv-managed shared interpreter was blocked by a Windows
+Application Control policy -- WinError 4551 -- for both this worktree and, separately, ruff;
+ruff was run instead from the already-working original checkout's venv against this worktree's
+source paths, which is path-based and has no import-time dependency on which venv runs it)
+
+python -m pytest -q            → 288 passed (274 + 14 new), ~19-20s
+ruff check app tests           → All checks passed!
+docker compose -p safedrive-dtc-grounding build --no-cache  → clean build, image
+  safedrive-dtc-grounding-backend:latest, sha256:c7af1ef5cb1547d66428bb140939347c79257c3f2ec2fbe1d4c665371bc38993
+docker run ... -p 8001:8000 ...  → GET /health → "status":"ok"; GET /ready → "status":"ready"
+```
+
+Live, against the freshly built container + real Ollama (`qwen2.5:7b-instruct-q4_K_M`):
+
+**DTC four-state** (`Section 6` naming: KNOWN_AND_ACTIVE / KNOWN_BUT_NOT_ACTIVE /
+UNKNOWN_TO_CATALOG / INVALID_CODE_LIKE_TOKEN):
+```
+KNOWN_AND_ACTIVE      "Ma U0100 nghia la gi?" (U0100 active, MEDIUM)
+  → llmUsed=true, narrated reply preserves "U0100" + severity guidance
+KNOWN_BUT_NOT_ACTIVE   "Ma U0100 nghia la gi?" (no active DTCs)
+  → llmUsed=false, fallback=true -- narration attempt rejected/unavailable this run, but the
+    deterministic fallback shown is the exact correct catalog text (U0100 meaning + "KHÔNG"
+    active) -- proof the fallback itself is never a content-free non-answer
+UNKNOWN_TO_CATALOG     "Ma P0130 nghia la gi?" (real code, not in the 7-entry catalog)
+  → llmUsed=true, honestly states "không có trong danh mục tham khảo", no invented meaning
+INVALID_CODE_LIKE_TOKEN  "XYZ123 nghia la gi?" (not DTC-shaped)
+  → llmUsed=false, fallback=false, 0.0s -- deterministic intercept, zero /api/chat calls,
+    token preserved verbatim in the reply
+```
+
+**Vietnamese reliability** (target: ≥19/20 warm requests produce an acceptable Vietnamese grounded
+response or a safe grounded fallback), 20 varied real requests against a nominal LOW-risk state (16
+genuinely vehicle-related phrasings across `assistant.general`/`assistant.vehicle_status`, 4
+genuinely off-topic: math, "FPT là gì", small talk, "tell me a story"):
+```
+RESULT: 20/20 acceptable (llmUsed=true on every single request, including all 4 off-topic ones --
+the retry mechanism was not even needed this run; every first attempt passed the language and
+grounding checks)
+```
+
+**Contextual fallback spot check**, fresh state pushed immediately before the query (to avoid the
+10s staleness window): "xe cua toi dao nay sao roi" →
+`llmUsed=true`, *"Xe đang chạy ổn định ở 60 km/h và cabin giữ nhiệt độ 25 độ C. Bạn có câu hỏi gì về
+tình trạng xe không?"* -- real, current values, not a canned refusal. A second run of the same
+phrasing after ~20s of unrelated queries (state now genuinely stale) correctly produced an honest
+stale-data warning instead of fabricating a still-current answer -- confirms
+`assistant.missing_context`'s staleness gate (`app/mobile/assistant.py:125`) still fires ahead of
+`assistant.general` regardless of route, exactly as designed.
+
+All live evidence above is `BACKEND_API` (real container + real Ollama, no Android device involved)
+and `UNIT_TEST` (mocked-provider tests in `tests/test_mobile_llm.py`/`test_mobile_assistant.py`) --
+see `docs/SUBMISSION_CHECKLIST.md` / the final audit report for what still requires on-device
+`ANDROID_UI`/`LOGCAT` evidence, which was not gathered in this pass.

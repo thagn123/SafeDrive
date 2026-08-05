@@ -20,6 +20,9 @@ ALLOWLISTED_LOG_FIELDS = {
     "status_code",
     "duration_ms",
     "exception_type",
+    "language_ok",
+    "retried",
+    "fallback_used",
 }
 
 
@@ -46,7 +49,16 @@ class JSONFormatter(logging.Formatter):
         }
 
         # Include optional allowlisted extra attributes
-        for field in ("method", "path", "status_code", "duration_ms", "exception_type"):
+        for field in (
+            "method",
+            "path",
+            "status_code",
+            "duration_ms",
+            "exception_type",
+            "language_ok",
+            "retried",
+            "fallback_used",
+        ):
             val = getattr(record, field, None)
             if val is not None:
                 data[field] = val

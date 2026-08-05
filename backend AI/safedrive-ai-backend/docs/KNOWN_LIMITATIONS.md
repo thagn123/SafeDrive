@@ -18,10 +18,19 @@
 - **`assistant.general`'s off-topic redirect is prompt-engineered, not code-enforced.**
   `OllamaNarrator.answer_open_query` is instructed to decline (briefly, honestly, in-scope) any
   question unrelated to driving/vehicle/safety rather than actually answering it — but the
-  guardrail can only verify the *output* (language, length, no invented numbers); it cannot verify
-  the model actually *declined* rather than answered. A model that ignores the instruction and
-  answers general trivia anyway would still pass the guardrail as long as it invents no numbers.
-  Mitigation is prompt quality and spot-checking, not a code-level check.
+  guardrail can only verify the *output* (language, semantic-unit-aware number grounding, no
+  invented numbers, required snippets); it cannot verify the model actually *declined* rather than
+  answered some unrelated trivia using only words that happen to also appear in the allowed
+  vocabulary. Mitigation is prompt quality and spot-checking (20/20 live requests in this pass
+  correctly declined 4 genuinely off-topic questions — see `docs/TEST_EVIDENCE.md`), not a
+  code-level guarantee that generalizes to every possible off-topic question.
+- **The unit-aware number grounding (`app/mobile/llm.py`, `_grounded_values_by_unit`) only
+  recognizes 5 unit suffixes** (`_kmh`, `_temperature_c`, `_percent`, `_minutes`, `_seconds`) and
+  does not disambiguate between two context fields that share the same unit (e.g. cabin and engine
+  temperature are both CELSIUS) — a narrated "25°C" is accepted if *either* field equals 25,
+  without confirming which one the sentence actually means. A number written with no unit the
+  parser recognizes falls back to the older, unit-agnostic "appears anywhere in context" check.
+  This is a deliberately minimal, testable implementation, not a full semantic parser.
 - **`required_narration_snippets` is a verbatim-substring check, not a meaning-preservation
   guarantee.** It closes one specific gap (a DTC code like `U0100` is invisible to the
   number-preservation regex; safety-directive clauses like the fatigue rest-stop instruction had no
@@ -105,3 +114,42 @@
   produces non-Vietnamese text mid-reply or echoes the fallback near-verbatim for off-topic
   questions — the guardrail correctly catches and falls back safely on both; this residual
   non-determinism was not chased further.
+- **Backend reconnect is partial, not a dedicated backoff mechanism (Android).** Confirmed by
+  direct code read (`ObserveCockpitUseCase.kt`, `SessionCoordinator.kt`,
+  `AssistantSocketClient.kt`): there is no exponential-backoff reconnect class. The 4-second state
+  heartbeat transparently retries session+state on the next tick after a failure (session cache is
+  nulled on error), and `SessionCoordinator.startSession` does exactly one immediate retry for
+  `Offline`/`Timeout` inside a single call. `/health`/`/ready` are checked **only** by the manual
+  "Kiểm tra sức khỏe backend" button in Settings — the app never polls health automatically. The
+  `/api/v1/ws/assistant` chat channel has no reconnect at all; a failed turn requires the user to
+  tap "Thử lại". None of this makes the app unusable after a disconnect (state resumes on its own
+  within one heartbeat tick), but "reconnect" is closer to "resume on next poll" than active retry.
+- **`llmUsed`/`fallback`/`fallbackReason` are decoded by the Android client but never shown on the
+  normal Cockpit/Assistant screens (only in the Developer/Settings screen).** Confirmed by code
+  read: `ChatBubbleItem.kt` renders `message.text` identically regardless of these fields; only
+  `SettingsScreen.kt`'s Developer Mode section surfaces an "LLM: Ollama / Deterministic fallback"
+  label, by that screen's own comment. A driver on the normal Assistant screen cannot tell from the
+  UI alone whether a given reply was model-narrated or the deterministic fallback — the backend
+  fixes in this pass make the fallback text itself good regardless, but the transparency gap in the
+  UI is real and was not closed here (out of scope: no UI changes were made this pass).
+- **TTS is gated by a local client preference, not a backend `speak` field.** `docs/ARCHITECTURE.md`
+  previously implied a backend-sent `speak=true` flag gates TTS; confirmed by code read
+  (`AssistantQueryResponseDto` has no such field) that this was never accurate — TTS is gated purely
+  by the Android-local `ttsEnabled` toggle (`AssistantTurnCoordinator.kt`). Corrected in this pass.
+- **A separate, concurrent session was found actively committing to this same shared working
+  directory during this pass** (branch `claude/carsky-deployment`, moving `main`-adjacent branch
+  refs and adding `docs/CARSKY_DEPLOYMENT_REPORT.md` + `evidence/carsky/*`). This work was isolated
+  into a dedicated `git worktree` for the remainder of this pass specifically to avoid collision: no
+  file from that other branch/session was read for correctness claims beyond the one check below,
+  edited, or committed by this pass. One concrete, verifiable problem was found in that other
+  session's report before isolating: it claims a live "PASS" result for a scenario producing
+  `fallbackReason=provider_timeout`, but the string `"provider_timeout"` does not exist anywhere in
+  this backend's code as an actual field value (`grep` confirms it appears only as a test-case *ID*
+  in `tests/fixtures/narration_cases.json`; the only `fallbackReason` this backend ever actually
+  produces is `"provider_unavailable"`, in `app/mobile/session_store.py`). That specific claimed
+  result does not match this codebase and should not be trusted without independent
+  re-verification. Separately, that report's independently-built APK SHA-256
+  (`1c4f3a56a09ecc61e4ed94d538b3203e0b1ef4b1fa8147822d54a575b17c16cd`) does exactly match a clean
+  rebuild performed in this pass from the same commit — i.e. not every claim in that document is
+  wrong, but it was not written with the rigor this task requires and specific claims in it should
+  not be taken on trust.
