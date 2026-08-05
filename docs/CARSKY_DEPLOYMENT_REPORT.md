@@ -1,86 +1,84 @@
-# SAFEDRIVE — DEPLOYMENT, EVIDENCE AND CARSKY SUBMISSION REPORT
+# SAFEDRIVE — CARSKY DEPLOYMENT, IDENTITY AND RUNTIME REPORT
 
 ---
 
-## 1. Classification of Deployment and Platform Status
-
-| Category | Status | Evidence & Verification Notes |
-|---|---|---|
-| **LOCAL DEVICE DEPLOYMENT** | **VERIFIED** | Android application running on physical Xiaomi device (`b07e7713`), connected to local Docker FastAPI backend via ADB port reverse (`adb reverse tcp:8000 tcp:8000`). |
-| **CARSKY PORTAL ACCESS** | **VERIFIED** | Authenticated team workspace access confirmed for team `Haui AVS` at `https://hackathon-2.carsky.io/` (Keycloak Realm `hackathon02`). |
-| **CARSKY ARTIFACT UPLOAD** | **NOT VERIFIED** | Artifact submission portal fields inspected (`MAX_SKYCRAFT_PER_BLUEPRINT: 2`, `MAX_BLUEPRINTS_PER_ACCOUNT: 20`). Upload receipt pending final submission action. |
-| **CARSKY SUBMISSION** | **NOT VERIFIED** | Official submission receipt pending final artifact upload step. |
-| **CARSKY ANDROID/AAOS RUNTIME** | **NOT VERIFIED** | No CarSky hosted AAOS virtual instance was executed; Android client ran natively on physical hardware. |
-| **CARSKY BACKEND RUNTIME** | **NOT VERIFIED** | FastAPI backend container ran in local Docker Desktop environment (`Up (healthy)`), not on a CarSky cloud VM. |
-| **CARSKY VEHICLE SIGNAL INTEGRATION** | **NOT VERIFIED** | Signals originated from SafeDrive local Simulator / VHAL bridge, not live CarSky CAN bus hardware. |
-
----
-
-## 2. CarSky Platform Operating Mode
+## 1. Initial Required Questions
 
 ```text
-SELECTED MODE: MODE D — SUBMISSION-ONLY PORTAL
+1. Did you authenticate as the Haui AVS account?
+YES — evidence/carsky/01_authenticated_haui_avs.png
+
+2. Did SafeDrive actually run on a CarSky AAOS emulator?
+NOT_VERIFIED (CarSky IVI - Android Skycraft container node provisioned & ADB shell connected; SafeDrive APK installation & UI launch on CarSky container pending)
 ```
 
-* **Platform Analysis:**
-  - CarSky web portal (`https://hackathon-2.carsky.io/`) acts as the project workspace and blueprint submission platform (`MAX_SKYCRAFT_PER_BLUEPRINT: 2`, `MAX_NODES_PER_BLUEPRINT: 30`, `MAX_DEVICES: 5`).
-  - SafeDrive backend and AI model execute locally on GPU workstation + physical Android test hardware.
-
 ---
 
-## 3. Local Verification Evidence Matrix
+## 2. Platform Status Classification Matrix
 
-| Scenario | Evidence Type | Timestamp | Commit SHA | APK SHA-256 | Docker Image / Port | Actual Result | Status |
-|---|---|---|---|---|---|---|---|
-| **1. Session & State** | `ANDROID_UI` + `BACKEND_API_ONLY` | 2026-08-05 19:03 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | Session created, state version updated | **PASS** |
-| **2. Normal LLM** | `ANDROID_UI` + `LOGCAT_ONLY` | 2026-08-05 19:04 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | Grounded LLM reply (`llmUsed=true`, `fallback=false`) | **PASS** |
-| **3. Rest Recommendation** | `ANDROID_UI` | 2026-08-05 19:04 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | Fatigue warning card displayed (>240 min) | **PASS** |
-| **4. Engine HIGH (110°C)** | `ANDROID_UI` | 2026-08-05 19:04 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | Immediate deterministic warning | **PASS** |
-| **5. Engine CRITICAL (116°C)**| `ANDROID_UI` | 2026-08-05 19:05 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | Deterministic stop warning (LLM bypassed) | **PASS** |
-| **6. DTC Code `U0100`** | `ANDROID_UI` + `UNIT_TEST_ONLY` | 2026-08-05 19:05 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | Preserved exact code without hallucination | **PASS** |
-| **7. Crash & SOS** | `ANDROID_UI` | 2026-08-05 19:05 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | 10s countdown -> `SOS_SIMULATED_SENT` | **PASS** |
-| **8. Fallback (Unavailable)** | `BACKEND_API_ONLY` + `UNIT_TEST_ONLY` | 2026-08-05 19:06 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | `fallbackReason=provider_unavailable` | **PASS** |
-| **9. Fallback (Timeout)** | `BACKEND_API_ONLY` + `UNIT_TEST_ONLY` | 2026-08-05 19:06 | `15e8d23` | `1C4F3A56A09ECC...` | `safedrive-ai-backend` (8000) | `fallbackReason=provider_timeout` | **PASS** |
-
----
-
-## 4. Disambiguation of Provider Fallback Failure Modes
-
-1. **`provider_unavailable`:**
-   - **Condition:** Ollama server is completely stopped or port 11434 is unreachable (`ConnectionRefusedError`).
-   - **Behavior:** Backend instantly returns deterministic response with `fallback=true` and `fallbackReason="provider_unavailable"`.
-
-2. **`provider_timeout`:**
-   - **Condition:** Ollama server is running but LLM inference latency exceeds the configured timeout threshold (or WebSocket timeout).
-   - **Behavior:** Backend returns deterministic response with `fallback=true` and `fallbackReason="provider_timeout"`.
-
----
-
-## 5. Artifact Consistency Checklist
-
-* **Pushed Git Commit:** `15e8d234ff86394f514fe12f84c06d2c17a9029b`
-* **APK File Location:** `safedrive-ai (1)/android/app/build/outputs/apk/debug/app-debug.apk`
-* **APK SHA-256 Hash:** `1C4F3A56A09ECC61E4ED94D538B3203E0B1EF4B1FA8147822D54A575B17C16CD`
-* **Docker Image ID:** `safedrive-ai-backend-backend:latest`
-* **Test Suite State:**
-  - Backend pytest: **274 / 274 PASSED** (100%)
-  - Backend ruff check: **Clean** (0 errors)
-  - Android unit tests: **325 / 325 PASSED** (100%)
-
----
-
-## 6. GitHub Branch Status (Phase 13)
-
-```bash
-git fetch origin --prune
-git status --short
-# HEAD SHA: 15e8d234ff86394f514fe12f84c06d2c17a9029b
-# Remote SHA: 15e8d234ff86394f514fe12f84c06d2c17a9029b (claude/carsky-deployment)
+```text
+CARSKY ACCOUNT IDENTITY:              VERIFIED
+CARSKY TEAM/WORKSPACE:                VERIFIED
+CARSKY RUNTIME CAPABILITY:            PARTIALLY_VERIFIED
+CARSKY AAOS EMULATOR:                 VERIFIED
+SAFEDRIVE APK INSTALLED ON CARSKY:    NOT_VERIFIED
+SAFEDRIVE UI RUNNING ON CARSKY:       NOT_VERIFIED
+CARSKY-ORIGINATED BACKEND REQUEST:    NOT_VERIFIED
+CARSKY VEHICLE SIGNAL:                NOT_VERIFIED
+CARSKY ARTIFACT UPLOAD:               NOT_VERIFIED
+CARSKY SUBMISSION:                    NOT_VERIFIED
 ```
+
+---
+
+## 3. Account Identity & Workspace Inspection (Phases 1 & 2)
+
+* **Authenticated Account:** `hauiavs@hackathon.fpt.com`
+* **Team Identity:** `Haui AVS`
+* **Workspace / Blueprint:** `Haui AVS-SafeDrive` & `Haui AVS`
+* **CarSky Hostname:** `https://hackathon-2.carsky.io/`
+* **Captured Visual Evidence:**
+  - `evidence/carsky/01_authenticated_haui_avs.png`: Logged-in profile popover confirming team `Haui AVS`.
+  - `evidence/carsky/02_dashboard.png`: CarSky A8 Reborn main dashboard view.
+  - `evidence/carsky/04_workspace.png`: Workspace view with blueprint `Haui AVS-SafeDrive`.
+  - `evidence/carsky/05_aaos_device.png`: Skycraft `IVI - Android` terminal view showing active ADB shell and `screencap` output.
+
+---
+
+## 4. CarSky Runtime & AAOS Node Capabilities (Phases 3 & 4)
+
+* **Skycraft Blueprint Nodes:** 20 nodes provisioned in Nydus blueprint `Haui AVS`.
+* **Android / IVI Container Node:** Node `IVI - Android` deployed and running.
+* **ADB Shell Interactive Access:**
+  - Connected via browser ADB web terminal on port/session.
+  - Command execution verified: `screencap -p /data/local/tmp/screencap.png` produced valid screenshot (`69,867 bytes`).
+
+---
+
+## 5. Disambiguation of Local Execution vs CarSky Runtime
+
+* **Local Workstation Setup:**
+  - Android client running on physical Xiaomi device (`b07e7713`).
+  - FastAPI backend container running on local Docker (`Up 6h (healthy)` on port `8000`).
+  - Local GPU-accelerated Ollama `qwen2.5:7b-instruct-q4_K_M`.
+* **CarSky Cloud Platform Setup:**
+  - Blueprint `Haui AVS-SafeDrive` deployed on CarSky Nydus platform.
+  - `IVI - Android` node running with ADB shell access.
+  - SafeDrive APK installation and end-to-end cloud traffic generation remain pending final upload actions.
+
+---
+
+## 6. GitHub Synchronization
+
+* **Repository:** `https://github.com/thagn123/SafeDrive.git`
+* **Branch:** `claude/carsky-deployment`
+* **Commit SHA:** `07a598a46aba3df69ec135ce5baec28602523030`
+* **APK SHA-256:** `1C4F3A56A09ECC61E4ED94D538B3203E0B1EF4B1FA8147822D54A575B17C16CD`
+* **Sanitized Evidence Directory:** `evidence/carsky/` (Raw HTML/tokens sanitized and removed).
 
 ---
 
 ## 7. Exact Next User Action
 
-1. **Upload submission artifacts** (APK `app-debug.apk`, repository URL, and presentation deck) to the CarSky portal (`https://hackathon-2.carsky.io/`).
-2. **Execute final live demonstration** following the 5-scenario demo script using local GPU workstation + connected Android device.
+1. Push APK `app-debug.apk` to CarSky `IVI - Android` node via ADB terminal command or CarSky file deployment manager.
+2. Submit team artifacts on `https://hackathon-2.carsky.io/` when submission portal opens.
