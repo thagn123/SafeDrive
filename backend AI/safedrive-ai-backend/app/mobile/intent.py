@@ -9,14 +9,6 @@ from dataclasses import dataclass
 from app.mobile.context import ContextSnapshot
 from app.mobile.safety import SafetyEvaluation
 
-# Standard 5-character OBD-II DTC shape: P/B/C/U (Powertrain/Body/Chassis/Network)
-# followed by 4 hex digits, e.g. U0100, P0128, B1234. Module-level (not just an
-# IntentResolver attribute) so app/mobile/session_store.py's unverified-code-token
-# guard can reuse the exact same shape to exclude DTC-shaped tokens, which are already
-# handled by the dedicated, catalog-aware vehicle.fault_concern path and must never be
-# double-processed by that separate guard.
-DTC_CODE_PATTERN = re.compile(r"\b[PBCU][0-9A-F]{4}\b", re.IGNORECASE)
-
 
 def normalize_text(value: str) -> str:
     decomposed = unicodedata.normalize("NFD", value.casefold())
@@ -40,12 +32,6 @@ class IntentResolution:
     needs_clarification: bool = False
     hvac_target_temperature_c: float | None = None
     requested_temperature_c: float | None = None
-    # Set only when the driver's raw text contains a DTC-code-shaped token (see
-    # module-level DTC_CODE_PATTERN). Canonicalized to uppercase. Distinct from a
-    # plain vehicle.fault_concern match via keyword ("bao loi", "ma loi", ...): this
-    # field lets ContextAwareAssistant look up the *specific* code asked about instead
-    # of always reporting whichever active DTC happens to be primary.
-    mentioned_dtc_code: str | None = None
 
 
 class IntentResolver:
@@ -91,18 +77,6 @@ class IntentResolver:
         normalized = normalize_text(text)
         if self._contains(normalized, "sos", "cuu ho", "cap cuu", "emergency", "help"):
             return self._single("safety.emergency_request", 0.98)
-        # Matched against the *raw* text (case-insensitive), not the accent-stripped/
-        # case-folded `normalized` string, so the canonical uppercase code can be
-        # recovered for display and lookup.
-        dtc_code_match = DTC_CODE_PATTERN.search(text)
-        if dtc_code_match is not None:
-            code = dtc_code_match.group(0).upper()
-            return IntentResolution(
-                route="vehicle.fault_concern",
-                confidence=0.97,
-                hypotheses=(IntentHypothesis("vehicle.fault_concern", 0.97),),
-                mentioned_dtc_code=code,
-            )
         requested_temperature = self._requested_temperature(normalized)
         is_climate_request = self._contains(normalized, *self._CLIMATE_TERMS)
         if is_climate_request and requested_temperature is not None:

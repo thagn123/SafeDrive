@@ -72,6 +72,14 @@ fun VoiceOverlay(
     if (!showRecognitionBubble && !showConversationSheet) return
 
     val colors = LocalSafeDriveStatusColors.current
+
+    androidx.compose.runtime.LaunchedEffect(outcome, ttsState) {
+        if (outcome != null && ttsState != TtsState.SPEAKING) {
+            kotlinx.coroutines.delay(3500L)
+            onDismissTurnOutcome()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (showConversationSheet) {
             Box(

@@ -20,59 +20,20 @@ oversight.
 | POST | `/api/v1/sessions/start` | Start a session (Demo or Remote) |
 | POST | `/api/v1/state/update` | Push a vehicle-state snapshot; returns `riskAssessment` computed synchronously, before any LLM call |
 | GET  | `/api/v1/state?sessionId=` | Read the latest state envelope |
-| POST | `/api/v1/assistant/query` | Text/voice-transcript turn; may narrate via Ollama when risk is LOW/MEDIUM |
+| POST | `/api/v1/assistant/query` | Text/voice-transcript turn; may narrate via Ollama for a small allow-listed set of routes only |
 | POST | `/api/v1/events` | Non-critical events (e.g. `USER_REPORTED_FATIGUE`) |
 | POST | `/api/v1/actions/confirm` | Confirm a server-issued action (only `SET_HVAC_TEMPERATURE` has a real side effect today) |
 | GET  | `/api/v1/emergency/{id}?sessionId=` | Read simulated SOS state machine |
 | POST | `/api/v1/emergency/{id}/respond` | User response during the SOS flow (`USER_OK`/`CANCEL_SOS`/`NO_RESPONSE`) |
-| WS   | `/api/v1/ws/assistant?sessionId=` | Same assistant turn as `POST /api/v1/assistant/query`, over a heartbeating transport — see below |
 
 No legacy aliases exist for these routes — Android has always called the `/api/v1/*` paths above.
 
-## `WS /api/v1/ws/assistant`
-
-Added so a real (possibly multi-second, e.g. cold-start Ollama) narration call is no longer bounded
-by a single fixed HTTP read timeout — see `docs/ARCHITECTURE.md`'s "Assistant chat transport"
-section for the full rationale. This is a transport change only: every query is answered by the
-exact same `MobileSessionStore.answer_assistant(...)` the REST route calls.
-
-**Handshake**: connect with `sessionId` as a query parameter (the session must already exist via
-`POST /api/v1/sessions/start`, exactly as for every other route). An invalid/expired/missing session
-closes the connection immediately with WebSocket close code `4401`.
-
-**Per query**, send one JSON text frame shaped exactly like `POST /api/v1/assistant/query`'s body
-(`sessionId`, `requestId`, `text`, `source`, `locale`, `clientAttemptOf`, `context`). The server
-replies with a sequence of frames:
-
-```json
-{"type": "heartbeat"}
-```
-Sent every ~2s while `answer_assistant` is still in flight. Zero or more of these may appear before
-the terminal frame; a client should reset its own liveness timer on each one rather than applying a
-single fixed wait.
-
-```json
-{"type": "final", "requestId": "req_1", "message": {"...": "..."}, "serverTimeMs": 1785843990273,
- "llmUsed": true, "fallback": false, "fallbackReason": null}
-```
-Exactly the same fields as the REST `AssistantQueryResponse` body (see below), always the last frame
-for that query. The connection stays open afterward — a client may send another query frame.
-
-```json
-{"type": "error", "requestId": "req_1", "code": "VALIDATION", "message": "Request validation failed."}
-```
-Sent instead of `final` when the query frame itself was malformed, or when `answer_assistant` raised
-a `MobileApiError` (same closed `code` enum as the REST error envelope: `TIMEOUT`, `OFFLINE`,
-`UNAUTHORIZED`, `UNSUPPORTED`, `CONFLICT`, `VALIDATION`, `SERVER`, `PROTOCOL`). The connection stays
-open after an error frame too.
-
 ## Not implemented
 
-`WS /api/v1/ws/cockpit` (vehicle-state/emergency **push**) does **not** exist — a different endpoint
-from `/api/v1/ws/assistant` above. The system uses client-driven polling (`GET /api/v1/state`, `GET
-/api/v1/emergency/{id}`) for those. This remains a deliberate scope decision — building a state-push
-channel was judged higher-risk/lower-value than the seven demo scenarios, all of which work
-correctly over polling. See `docs/KNOWN_LIMITATIONS.md`.
+`WS /api/v1/ws/cockpit` does **not** exist. The system uses client-driven polling (`GET
+/api/v1/state`, `GET /api/v1/emergency/{id}`) instead. This was a deliberate scope decision for this
+pass — building a new WebSocket push channel was judged higher-risk/lower-value than the seven demo
+scenarios, all of which work correctly over polling. See `docs/KNOWN_LIMITATIONS.md`.
 
 ## `AssistantQueryResponse` observability fields
 
@@ -90,9 +51,8 @@ Added for the competition MVP — additive/optional, so an older client or backe
 }
 ```
 
-- `llmUsed=false, fallback=false` — no LLM call was attempted for this turn. This now depends on
-  risk level, not a fixed route list: any HIGH/CRITICAL reply, and `safety.emergency_request`
-  (SOS) regardless of risk level, are the only cases that never attempt narration at all.
+- `llmUsed=false, fallback=false` — this route never calls an LLM at all (deterministic by design:
+  DTC, fatigue, HVAC, status).
 - `llmUsed=true, fallback=false` — a real Ollama call produced this reply.
 - `llmUsed=false, fallback=true, fallbackReason="provider_unavailable"` — an LLM attempt was made
   for a narratable route (e.g. `companion.conversation`) and failed/was rejected; the deterministic

@@ -9,23 +9,16 @@ import vn.edu.haui.hvs.safedrive.core.model.AssistantQueryRequest
 import vn.edu.haui.hvs.safedrive.core.model.AssistantQueryResult
 import vn.edu.haui.hvs.safedrive.core.model.AssistantTurnSource
 
-/** Absolute backstop for the whole turn (session resolution + query), regardless of how the
- * gateway internally waits for its answer. Not a routine ceiling: for
- * [vn.edu.haui.hvs.safedrive.data.remote.RemoteSafeDriveGateway], the query itself now runs over a
- * heartbeating WebSocket transport that can legitimately take longer than any single fixed HTTP
- * read timeout (e.g. cold-start Ollama, observed ~15s in manual device testing) as long as the
- * server keeps proving it's still working -- this outer cap only fires for a connection that's
- * genuinely hung. */
-private const val ASSISTANT_TURN_TOTAL_TIMEOUT_MS = 30_000L
+private const val ASSISTANT_TURN_TOTAL_TIMEOUT_MS = 10_000L
 
 /**
  * Single entry point for both typed and voice assistant queries (see
  * docs/android-mvp-plan/08-claude-prompts.md, Prompt 3: "Assistant phải dùng một
  * AssistantQueryUseCase cho text và voice"). Empty transcript/text never reaches the gateway.
  *
- * The [ASSISTANT_TURN_TOTAL_TIMEOUT_MS] timeout wraps session resolution **and** the query
- * together — a slow/hanging Remote session-start can no longer let the total wait exceed the
- * budget by waiting a further full network timeout on top (the old GAP-07 double-wait).
+ * The 10s timeout (docs/android-mvp-plan/12 W5.4/W5.11) wraps session resolution **and** the query
+ * together — a slow/hanging Remote session-start can no longer let the total wait exceed the budget
+ * by waiting a further full network timeout on top (the old GAP-07 double-wait).
  *
  * [requestId] is minted by the caller ([AssistantTurnCoordinator]) — this class never mints its own
  * network request id — so the id used for [InFlightAssistantTurn][vn.edu.haui.hvs.safedrive.core.model.InFlightAssistantTurn]

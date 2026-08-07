@@ -3,6 +3,7 @@ package vn.edu.haui.hvs.safedrive.voice
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,22 +37,39 @@ class AndroidTextToSpeechController(context: Context, private val clock: AppCloc
 
     init {
         engine = TextToSpeech(context.applicationContext) { status ->
+            Log.d("SafeDriveVoiceDebug", "[TTS] init callback: status=$status (SUCCESS=${TextToSpeech.SUCCESS})")
             if (status != TextToSpeech.SUCCESS) {
                 _state.value = TtsState.ERROR
                 return@TextToSpeech
             }
             val current = engine
-            when (current?.setLanguage(Locale.forLanguageTag("vi-VN"))) {
-                TextToSpeech.LANG_MISSING_DATA -> _state.value = TtsState.MISSING_DATA
-                TextToSpeech.LANG_NOT_SUPPORTED -> _state.value = TtsState.UNSUPPORTED
-                else -> {
-                    current?.setSpeechRate(1.0f)
-                    current?.setPitch(1.0f)
-                    current?.setOnUtteranceProgressListener(progressListener)
-                    _state.value = TtsState.READY
-                    pending?.let { speak(it.text, it.utteranceId) }
-                    pending = null
+            var langResult = current?.setLanguage(Locale.forLanguageTag("vi-VN"))
+            Log.d("SafeDriveVoiceDebug", "[TTS] setLanguage(vi-VN) result=$langResult")
+            if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                langResult = current?.setLanguage(Locale("vi", "VN"))
+                Log.d("SafeDriveVoiceDebug", "[TTS] setLanguage(Locale(vi,VN)) result=$langResult")
+            }
+            if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                langResult = current?.setLanguage(Locale("vi"))
+                Log.d("SafeDriveVoiceDebug", "[TTS] setLanguage(Locale(vi)) result=$langResult")
+            }
+            if (langResult == TextToSpeech.LANG_MISSING_DATA) {
+                Log.w("SafeDriveVoiceDebug", "[TTS] MISSING_DATA for Vietnamese")
+                _state.value = TtsState.MISSING_DATA
+            } else if (langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                Log.w("SafeDriveVoiceDebug", "[TTS] UNSUPPORTED for Vietnamese")
+                _state.value = TtsState.UNSUPPORTED
+            } else {
+                current?.setSpeechRate(1.0f)
+                current?.setPitch(1.0f)
+                current?.setOnUtteranceProgressListener(progressListener)
+                Log.d("SafeDriveVoiceDebug", "[TTS] initialized READY for Vietnamese")
+                _state.value = TtsState.READY
+                pending?.let {
+                    Log.d("SafeDriveVoiceDebug", "[TTS] playing queued utterance: id=${it.utteranceId}")
+                    speak(it.text, it.utteranceId)
                 }
+                pending = null
             }
         }
     }
@@ -79,14 +97,18 @@ class AndroidTextToSpeechController(context: Context, private val clock: AppCloc
     override fun speak(text: String, utteranceId: String) {
         val current = engine
         val readyState = _state.value
+        Log.d("SafeDriveVoiceDebug", "[TTS] speak() called: id=$utteranceId, state=$readyState, engine=${if(current != null) "OK" else "NULL"}, text='${text.take(50)}'")
         if (current == null || readyState == TtsState.INITIALIZING) {
+            Log.d("SafeDriveVoiceDebug", "[TTS] speak() -> queued (engine initializing)")
             pending = PendingUtterance(text, utteranceId) // queue only the latest call (W3.4)
             return
         }
         if (readyState == TtsState.UNSUPPORTED || readyState == TtsState.MISSING_DATA) {
+            Log.w("SafeDriveVoiceDebug", "[TTS] speak() -> SKIPPED: state=$readyState (cannot speak vi-VN)")
             return // engine cannot speak vi-VN at all; caller/UI already reflects this via state
         }
-        current.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        val result = current.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
+        Log.d("SafeDriveVoiceDebug", "[TTS] speak() -> engine.speak() result=$result (SUCCESS=${TextToSpeech.SUCCESS})")
     }
 
     override fun stop() {

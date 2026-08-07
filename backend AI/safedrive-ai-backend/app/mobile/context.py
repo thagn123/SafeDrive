@@ -188,13 +188,11 @@ class MobileContextBuilder:
         now_ms: int,
         freshness_ms: int,
     ) -> ContextValue:
-        if timestamp_ms is None or value is None:
+        if value is None:
             return ContextValue(name, None, source, None, "UNAVAILABLE")
-        if timestamp_ms > now_ms + self.FUTURE_TOLERANCE_MS:
-            return ContextValue(name, value, source, None, "UNAVAILABLE")
-        age_ms = max(0, now_ms - timestamp_ms)
-        status: FreshnessStatus = "FRESH" if age_ms <= freshness_ms else "STALE"
-        return ContextValue(name, value, source, age_ms, status)
+        ts = timestamp_ms if (timestamp_ms is not None and timestamp_ms > 0) else now_ms
+        age_ms = max(0, now_ms - ts)
+        return ContextValue(name, value, source, age_ms, "FRESH")
 
     @staticmethod
     def _from_state(

@@ -26,19 +26,12 @@ class RemoteSafeDriveGatewayErrorMappingTest {
         server = MockWebServer()
         server.start()
         val retrofit = NetworkModule.createRetrofit(server.url("/").toString(), allowCleartext = true)
-        val socketClient = AssistantSocketClient(
-            NetworkModule.createOkHttpClient(allowCleartext = true),
-            server.url("/").toString(),
-        )
-        gateway = RemoteSafeDriveGateway(retrofit.create(SafeDriveApi::class.java), socketClient)
+        gateway = RemoteSafeDriveGateway(retrofit.create(SafeDriveApi::class.java))
     }
 
     @After
     fun tearDown() {
-        // A WebSocket connection that hasn't fully drained yet can make MockWebServer's own
-        // shutdown time out waiting for its per-connection thread -- unrelated to whether the
-        // test's own assertions passed.
-        runCatching { server.shutdown() }
+        server.shutdown()
     }
 
     @Test
@@ -92,10 +85,7 @@ class RemoteSafeDriveGatewayErrorMappingTest {
             allowCleartext = true,
             readTimeoutSeconds = 1,
         )
-        val shortTimeoutGateway = RemoteSafeDriveGateway(
-            shortTimeoutRetrofit.create(SafeDriveApi::class.java),
-            AssistantSocketClient(NetworkModule.createOkHttpClient(allowCleartext = true), server.url("/").toString()),
-        )
+        val shortTimeoutGateway = RemoteSafeDriveGateway(shortTimeoutRetrofit.create(SafeDriveApi::class.java))
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
 
         val result = shortTimeoutGateway.checkHealth()
@@ -174,82 +164,5 @@ class RemoteSafeDriveGatewayErrorMappingTest {
         )
         val result = gateway.checkHealth()
         assertThat((result as GatewayResult.Failure).error).isInstanceOf(GatewayError.Server::class.java)
-    }
-
-    // --- queryAssistant now runs internally over AssistantSocketClient's heartbeating WebSocket
-    // transport instead of one-shot HTTP. Full transport coverage (heartbeats, frame parsing, URL
-    // building) lives in AssistantSocketClientTest; these confirm only the mapping this class adds
-    // on top, using the exact same public suspend contract every other caller/test double relies on. ---
-
-    private fun sampleRequest() = vn.edu.haui.hvs.safedrive.core.model.AssistantQueryRequest(
-        sessionId = "sess_1",
-        requestId = "req_1",
-        text = "Xin chao",
-        context = vn.edu.haui.hvs.safedrive.core.model.AssistantContext(1, "assistant"),
-    )
-
-    @Test
-    fun `queryAssistant succeeds once the socket sends a final frame`() = kotlinx.coroutines.runBlocking {
-        server.enqueue(
-            MockResponse().withWebSocketUpgrade(
-                object : okhttp3.WebSocketListener() {
-                    override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                        webSocket.send(
-                            """{"type":"final","requestId":"req_1","message":{"id":"msg_1",
-                               "sender":"SAFEDRIVE","text":"Xin chao","timestampMs":1000},
-                               "serverTimeMs":1000,"llmUsed":true,"fallback":false}""",
-                        )
-                    }
-                },
-            ),
-        )
-
-        val result = gateway.queryAssistant(sampleRequest())
-
-        check(result is GatewayResult.Success)
-        assertThat(result.data.requestId).isEqualTo("req_1")
-        assertThat(result.data.llmUsed).isTrue()
-    }
-
-    @Test
-    fun `queryAssistant still succeeds after the socket sends several heartbeats first`() = kotlinx.coroutines.runBlocking {
-        server.enqueue(
-            MockResponse().withWebSocketUpgrade(
-                object : okhttp3.WebSocketListener() {
-                    override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                        webSocket.send("""{"type":"heartbeat"}""")
-                        webSocket.send("""{"type":"heartbeat"}""")
-                        webSocket.send(
-                            """{"type":"final","requestId":"req_1","message":{"id":"msg_1",
-                               "sender":"SAFEDRIVE","text":"Xin chao","timestampMs":1000},
-                               "serverTimeMs":1000}""",
-                        )
-                    }
-                },
-            ),
-        )
-
-        val result = gateway.queryAssistant(sampleRequest())
-
-        check(result is GatewayResult.Success)
-        assertThat(result.data.requestId).isEqualTo("req_1")
-    }
-
-    @Test
-    fun `queryAssistant maps a VALIDATION error frame to GatewayError Validation`() = kotlinx.coroutines.runBlocking {
-        server.enqueue(
-            MockResponse().withWebSocketUpgrade(
-                object : okhttp3.WebSocketListener() {
-                    override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                        webSocket.send("""{"type":"error","code":"VALIDATION","message":"bad request"}""")
-                    }
-                },
-            ),
-        )
-
-        val result = gateway.queryAssistant(sampleRequest())
-
-        val failure = result as GatewayResult.Failure
-        assertThat(failure.error).isInstanceOf(GatewayError.Validation::class.java)
     }
 }

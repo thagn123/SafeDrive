@@ -24,20 +24,33 @@ export const VoiceOverlay: React.FC = () => {
 
   const [inputQuery, setInputQuery] = useState('');
 
+  useEffect(() => {
+    if (
+      voiceState === 'SPEAKING' ||
+      voiceState === 'IDLE' ||
+      voiceState === 'ERROR' ||
+      voiceState === 'WAKE_WORD_DETECTED' ||
+      voiceState === 'PROCESSING'
+    ) {
+      setInputQuery('');
+    }
+  }, [voiceState]);
+
   if (voiceState === 'IDLE' || voiceState === 'DISABLED') {
     return null;
   }
 
   const handleQuickSpeech = (query: string) => {
-    setInputQuery(query);
+    setInputQuery('');
     submitVoiceQuery(query);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (inputQuery.trim()) {
-      submitVoiceQuery(inputQuery);
+      const q = inputQuery.trim();
       setInputQuery('');
+      submitVoiceQuery(q);
     }
   };
 

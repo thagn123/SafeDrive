@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import android.util.Log
 import vn.edu.haui.hvs.safedrive.core.common.GatewayResult
 import vn.edu.haui.hvs.safedrive.core.model.ActionType
 import vn.edu.haui.hvs.safedrive.core.model.AssistantTurnSource
@@ -22,6 +23,9 @@ import vn.edu.haui.hvs.safedrive.domain.repository.VehicleDataSource
 import vn.edu.haui.hvs.safedrive.domain.usecase.AssistantTurnCoordinator
 import vn.edu.haui.hvs.safedrive.domain.usecase.ConfirmActionUseCase
 import vn.edu.haui.hvs.safedrive.domain.usecase.PendingPromptCoordinator
+
+import vn.edu.haui.hvs.safedrive.core.model.VoiceState
+import vn.edu.haui.hvs.safedrive.voice.VoiceController
 
 private const val SCREEN_ASSISTANT = "assistant"
 
@@ -41,6 +45,7 @@ class AssistantViewModel(
     private val pendingPromptCoordinator: PendingPromptCoordinator,
     private val vehicleDataSource: VehicleDataSource? = null,
     private val clock: AppClock? = null,
+    private val voiceController: VoiceController? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(AssistantUiState())
@@ -58,6 +63,7 @@ class AssistantViewModel(
                         isSending = conversation.inFlightTurn != null,
                         canRetry = conversation.retryableTurn != null,
                         errorMessage = conversation.errorMessage,
+                        composerText = if (conversation.inFlightTurn != null) "" else it.composerText,
                     )
                 }
             }
@@ -77,6 +83,40 @@ class AssistantViewModel(
             cockpitSnapshot.collect { snapshot ->
                 if (snapshot != null) {
                     _state.update { it.copy(connectionStatus = snapshot.connectionStatus) }
+                }
+            }
+        }
+        if (voiceController != null) {
+            viewModelScope.launch {
+                voiceController.state.collect { voiceState ->
+                    Log.d("SafeDriveVoiceDebug", "[VM] voiceState changed: state=${voiceState.state}, partial='${voiceState.partialTranscript}', final='${voiceState.finalTranscript}', gen=${voiceState.generation}")
+
+                    when (voiceState.state) {
+                        VoiceState.LISTENING -> {
+                            // Show live partial transcript in the composer while user is speaking
+                            if (voiceState.partialTranscript.isNotBlank()) {
+                                _state.update { it.copy(composerText = voiceState.partialTranscript) }
+                            }
+                        }
+                        VoiceState.PROCESSING -> {
+                            // Show the final transcript briefly, then clear it
+                            // VoiceAssistantCoordinator handles the actual submit — we do NOT auto-submit here
+                            if (voiceState.finalTranscript.isNotBlank()) {
+                                _state.update { it.copy(composerText = voiceState.finalTranscript) }
+                                Log.d("SafeDriveVoiceDebug", "[VM] composerText set to finalTranscript='${voiceState.finalTranscript}' (display only)")
+                            }
+                        }
+                        VoiceState.IDLE, VoiceState.WAKE_WORD_DETECTED -> {
+                            // Clear the composer text when recognition is done or restarting
+                            _state.update { it.copy(composerText = "") }
+                        }
+                        else -> {
+                            // ERROR or other states — clear stale text
+                            if (voiceState.finalTranscript.isBlank() && voiceState.partialTranscript.isBlank()) {
+                                _state.update { it.copy(composerText = "") }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -103,8 +143,13 @@ class AssistantViewModel(
 
     /** Delegates to the shared coordinator; clears the composer only if a turn actually started. */
     private fun submit(text: String, source: AssistantTurnSource) {
-        if (assistantTurnCoordinator.submit(text, source, SCREEN_ASSISTANT)) {
+        Log.d("SafeDriveVoiceDebug", "[VM] submit() called: text='$text', source=$source")
+        val started = assistantTurnCoordinator.submit(text, source, SCREEN_ASSISTANT)
+        Log.d("SafeDriveVoiceDebug", "[VM] submit() result: started=$started")
+        if (started) {
             _state.update { it.copy(composerText = "") }
+        } else {
+            Log.w("SafeDriveVoiceDebug", "[VM] submit() FAILED - turn not started (already in-flight?)")
         }
     }
 
