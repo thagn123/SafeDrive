@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 import vn.edu.haui.hvs.safedrive.core.common.GatewayResult
 import vn.edu.haui.hvs.safedrive.core.model.ActionType
 import vn.edu.haui.hvs.safedrive.core.model.AssistantTurnSource
+import vn.edu.haui.hvs.safedrive.core.model.ChatMessage
+import vn.edu.haui.hvs.safedrive.core.model.ChatSender
 import vn.edu.haui.hvs.safedrive.core.model.CockpitSnapshot
 import vn.edu.haui.hvs.safedrive.core.model.SafeDriveAction
 import vn.edu.haui.hvs.safedrive.domain.repository.ConversationRepository
@@ -121,9 +123,29 @@ class AssistantViewModel(
         _state.update { it.copy(isConfirmingAction = true) }
         viewModelScope.launch {
             val contextVersion = cockpitSnapshot.value?.stateVersion ?: 0L
-            when (confirmActionUseCase(action, true, contextVersion)) {
+            when (val result = confirmActionUseCase(action, true, contextVersion)) {
                 is GatewayResult.Success -> {
                     _state.update { it.copy(pendingAction = null, isConfirmingAction = false, confirmError = null) }
+                    // The backend can return HTTP 200 with accepted=false (stale context, an engine
+                    // temperature that crossed a safety threshold, a tampered/replayed confirmation --
+                    // see MobileSessionStore.confirm_action() and RemoteSafeDriveGateway.confirmAction(),
+                    // which only inspects HTTP status, never this field). A GatewayResult.Success
+                    // wrapper alone does not mean the executor applied anything.
+                    //
+                    // This gate is deliberately centralized ahead of the per-type dispatch rather than
+                    // living inside the HVAC branch: HVAC is the only type that mutates simulated
+                    // vehicle state today, but acknowledging a backend *rejection* with a success
+                    // effect -- a confirmation toast, a diagnostics screen, a "recorded" message --
+                    // is an authority violation for every type, not just the one that writes state.
+                    if (!result.data.accepted) {
+                        _state.update {
+                            it.copy(confirmError = "Không thể xác nhận hành động. Vui lòng thử lại.")
+                        }
+                        return@launch
+                    }
+                    if (action.type == ActionType.SET_HVAC_TEMPERATURE) {
+                        appendHvacConfirmationMessage(action)
+                    }
                     performEffect(action)
                 }
 
@@ -134,6 +156,27 @@ class AssistantViewModel(
                 }
             }
         }
+    }
+
+    /** Persists the verified HVAC confirmation as a real conversation turn (SAFEDRIVE_AGENT_ARMOR_PLAN.md
+     * Slice 5A) via [ConversationRepository.appendSystemNotice] -- the same safe, no-turn-implications
+     * append already used for backend-confirmed facts that were never a user-turn reply (see
+     * [vn.edu.haui.hvs.safedrive.SafeDriveContainer]'s proactive Safety Guardian notice). Called only
+     * from the `result.data.accepted == true` branch above -- [action.hvacTargetTemperatureC] is trusted
+     * here specifically because the backend's confirm_action() only accepts a confirmation whose target
+     * exactly matches what it issued (a mismatched target is rejected before execution), so this is the
+     * backend-verified value, not the optimistic proposal. */
+    private fun appendHvacConfirmationMessage(action: SafeDriveAction) {
+        val target = action.hvacTargetTemperatureC ?: return
+        conversationRepository.appendSystemNotice(
+            ChatMessage(
+                id = "${action.id}_confirmed",
+                sender = ChatSender.SAFEDRIVE,
+                text = "Tôi đã đặt điều hòa ở ${target.toInt()}°C.",
+                timestampMs = clock?.nowMs() ?: System.currentTimeMillis(),
+                route = "action.confirm.hvac",
+            ),
+        )
     }
 
     private fun performEffect(action: SafeDriveAction) {

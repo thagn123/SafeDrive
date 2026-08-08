@@ -2,9 +2,11 @@ package vn.edu.haui.hvs.safedrive.feature.assistant
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
@@ -278,6 +280,231 @@ class AssistantViewModelTest {
         assertThat(dataSource.vehicleState.value.hvacTargetTemperatureC).isEqualTo(23f)
         assertThat(dataSource.vehicleState.value.updatedAtMs).isEqualTo(clock.nowMs())
     }
+
+    // --- SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 5A: persist verified HVAC execution into conversation ---
+
+    @Test
+    fun `confirming a typed HVAC action appends a verified SafeDrive confirmation message`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val dataSource = MockVehicleDataSource(clock, fixtures)
+            val vehicleState = dataSource.vehicleState.value
+            val signals = dataSource.driverSupportSignals.value
+            val policy = MockPolicyEvaluator(clock)
+            val rest = policy.evaluateRestRecommendation(vehicleState, signals)
+            val snapshot = MutableStateFlow(
+                CockpitSnapshot(
+                    vehicleState = vehicleState,
+                    driverSupportSignals = signals,
+                    riskAssessment = policy.evaluateRisk(vehicleState, rest),
+                    restRecommendation = rest,
+                    connectionStatus = vn.edu.haui.hvs.safedrive.core.model.SystemConnectionStatus.NORMAL,
+                    stateVersion = 1L,
+                    updatedAtMs = clock.nowMs(),
+                ),
+            )
+            val viewModel = buildViewModel(scope = this, cockpitSnapshotFlow = snapshot, vehicleDataSource = dataSource)
+            val action = SafeDriveAction(
+                id = "act_hvac_26",
+                type = ActionType.SET_HVAC_TEMPERATURE,
+                title = "Dat dieu hoa 26 do C",
+                requiresConfirmation = true,
+                hvacTargetTemperatureC = 26f,
+            )
+
+            viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+
+            val messages = viewModel.state.value.messages
+            assertThat(messages).hasSize(1)
+            assertThat(messages[0].sender.name).isEqualTo("SAFEDRIVE")
+            assertThat(messages[0].text).contains("26")
+            // CASE C (execution result vs. proposal): MockSafeDriveGateway.confirmAction() -- and the real
+            // backend's confirm_action(), per its "details do not match" rejection test -- only ever
+            // returns accepted=true when the confirmed target exactly equals the originally-issued target.
+            // action.hvacTargetTemperatureC is therefore the backend-verified value here, not an unverified
+            // echo of the proposal. The current contract has no way to construct a case where the applied
+            // value legitimately differs from the proposed one -- any mismatch is rejected before
+            // execution -- so no test can force execution-result != proposal without contradicting the
+            // backend's own validation contract. Documented here rather than faked.
+        }
+
+    @Test
+    fun `a failed HVAC confirmation appends no SafeDrive confirmation message`() = runTest(mainDispatcherRule.dispatcher) {
+        val failingGateway = object : SafeDriveGateway by gateway {
+            override suspend fun confirmAction(
+                request: vn.edu.haui.hvs.safedrive.core.model.ActionConfirmRequest,
+            ) = vn.edu.haui.hvs.safedrive.core.common.GatewayResult.Failure(
+                vn.edu.haui.hvs.safedrive.core.common.GatewayError.Server(500, "boom"),
+            )
+        }
+        val viewModel = buildViewModel(this, provider = fakeGatewayProvider { failingGateway })
+        val action = SafeDriveAction(
+            id = "act_hvac_fail",
+            type = ActionType.SET_HVAC_TEMPERATURE,
+            title = "Dat dieu hoa 26 do C",
+            requiresConfirmation = true,
+            hvacTargetTemperatureC = 26f,
+        )
+
+        viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+        viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+        advanceUntilIdle()
+
+        assertThat(viewModel.state.value.messages).isEmpty()
+        assertThat(viewModel.state.value.confirmError).isNotNull()
+    }
+
+    @Test
+    fun `an accepted=false confirmation appends no SafeDrive message and does not mutate simulated HVAC`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val dataSource = MockVehicleDataSource(clock, fixtures)
+            val originalTarget = dataSource.vehicleState.value.hvacTargetTemperatureC
+            val rejectingGateway = object : SafeDriveGateway by gateway {
+                override suspend fun confirmAction(
+                    request: vn.edu.haui.hvs.safedrive.core.model.ActionConfirmRequest,
+                ) = vn.edu.haui.hvs.safedrive.core.common.GatewayResult.Success(
+                    vn.edu.haui.hvs.safedrive.core.model.ActionConfirmResult(
+                        accepted = false,
+                        actionResult = null,
+                        message = "The vehicle context changed. Please review the latest recommendation.",
+                        serverTimeMs = clock.nowMs(),
+                    ),
+                )
+            }
+            val viewModel = buildViewModel(
+                this,
+                provider = fakeGatewayProvider { rejectingGateway },
+                vehicleDataSource = dataSource,
+            )
+            val action = SafeDriveAction(
+                id = "act_hvac_stale",
+                type = ActionType.SET_HVAC_TEMPERATURE,
+                title = "Dat dieu hoa 26 do C",
+                requiresConfirmation = true,
+                hvacTargetTemperatureC = 26f,
+            )
+
+            viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+
+            // Regression guard for the bug this slice fixes: an HTTP 200 + accepted=false response
+            // (MobileSessionStore.confirm_action()'s stale/tampered/replay rejections) must not be treated
+            // as proof of execution -- previously performEffect() ran unconditionally here, mutating the
+            // local simulated vehicle state and showing a "Đã đặt..." toast despite the backend having
+            // rejected the confirmation.
+            assertThat(viewModel.state.value.messages).isEmpty()
+            assertThat(dataSource.vehicleState.value.hvacTargetTemperatureC).isEqualTo(originalTarget)
+            assertThat(viewModel.state.value.confirmError).isNotNull()
+        }
+
+    @Test
+    fun `an accepted=false confirmation produces no success effect for a non-HVAC action`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            // Action-authority consistency: HVAC is the only type that mutates simulated vehicle
+            // state, but acknowledging a backend *rejection* with a success effect is an authority
+            // violation for every type. Before the centralized gate, GatewayResult.Success ran
+            // performEffect() unconditionally for OPEN_DIAGNOSTICS / SHOW_WARNING /
+            // SUGGEST_REST_STOP / START_SOS_COUNTDOWN, so a rejected confirmation still opened the
+            // diagnostics screen or showed a "đã được ghi nhận" confirmation toast.
+            val rejectingGateway = object : SafeDriveGateway by gateway {
+                override suspend fun confirmAction(
+                    request: vn.edu.haui.hvs.safedrive.core.model.ActionConfirmRequest,
+                ) = vn.edu.haui.hvs.safedrive.core.common.GatewayResult.Success(
+                    vn.edu.haui.hvs.safedrive.core.model.ActionConfirmResult(
+                        accepted = false,
+                        actionResult = null,
+                        message = "This action was not issued for the current vehicle context.",
+                        serverTimeMs = clock.nowMs(),
+                    ),
+                )
+            }
+            val viewModel = buildViewModel(this, provider = fakeGatewayProvider { rejectingGateway })
+            val action = SafeDriveAction(
+                id = "act_diag_stale",
+                type = ActionType.OPEN_DIAGNOSTICS,
+                title = "Mở chẩn đoán",
+                requiresConfirmation = true,
+            )
+
+            val effects = mutableListOf<AssistantUiEffect>()
+            val job = launch(Dispatchers.Unconfined) { viewModel.effects.collect { effects.add(it) } }
+
+            viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+
+            assertThat(effects).isEmpty()
+            assertThat(viewModel.state.value.confirmError).isNotNull()
+            assertThat(viewModel.state.value.pendingAction).isNull()
+            job.cancel()
+        }
+
+    @Test
+    fun `an accepted=true confirmation still produces the effect for a non-HVAC action`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val viewModel = buildViewModel(this)
+            val action = SafeDriveAction(
+                id = "act_diag_ok",
+                type = ActionType.OPEN_DIAGNOSTICS,
+                title = "Mở chẩn đoán",
+                requiresConfirmation = true,
+            )
+
+            val effects = mutableListOf<AssistantUiEffect>()
+            val job = launch(Dispatchers.Unconfined) { viewModel.effects.collect { effects.add(it) } }
+
+            viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+
+            // Positive control for the test above: the centralized accepted gate must not have
+            // broken the ordinary success path for non-HVAC actions.
+            assertThat(effects).containsExactly(AssistantUiEffect.OpenDiagnostics)
+            assertThat(viewModel.state.value.confirmError).isNull()
+            job.cancel()
+        }
+
+    @Test
+    fun `re-dispatching confirm after success does not duplicate the SafeDrive confirmation message`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val dataSource = MockVehicleDataSource(clock, fixtures)
+            val vehicleState = dataSource.vehicleState.value
+            val signals = dataSource.driverSupportSignals.value
+            val policy = MockPolicyEvaluator(clock)
+            val rest = policy.evaluateRestRecommendation(vehicleState, signals)
+            val snapshot = MutableStateFlow(
+                CockpitSnapshot(
+                    vehicleState = vehicleState,
+                    driverSupportSignals = signals,
+                    riskAssessment = policy.evaluateRisk(vehicleState, rest),
+                    restRecommendation = rest,
+                    connectionStatus = vn.edu.haui.hvs.safedrive.core.model.SystemConnectionStatus.NORMAL,
+                    stateVersion = 1L,
+                    updatedAtMs = clock.nowMs(),
+                ),
+            )
+            val viewModel = buildViewModel(scope = this, cockpitSnapshotFlow = snapshot, vehicleDataSource = dataSource)
+            val action = SafeDriveAction(
+                id = "act_hvac_24",
+                type = ActionType.SET_HVAC_TEMPERATURE,
+                title = "Dat dieu hoa 24 do C",
+                requiresConfirmation = true,
+                hvacTargetTemperatureC = 24f,
+            )
+
+            viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+            assertThat(viewModel.state.value.messages).hasSize(1)
+
+            // pendingAction is already null after a successful confirm -- a second dispatch (e.g. a
+            // duplicate button event) must be a no-op, not a second confirmation call/message.
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+            assertThat(viewModel.state.value.messages).hasSize(1)
+        }
 
     @Test
     fun `pending prompt from Diagnostics prefills the composer on init`() = runTest(mainDispatcherRule.dispatcher) {
