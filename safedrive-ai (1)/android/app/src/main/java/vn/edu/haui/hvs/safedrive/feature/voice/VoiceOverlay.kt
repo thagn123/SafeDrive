@@ -67,6 +67,7 @@ fun VoiceOverlay(
     val showConversationSheet =
         speaking ||
             outcome != null ||
+            voiceState.state == VoiceState.LISTENING ||
             voiceState.state == VoiceState.PROCESSING ||
             voiceState.state == VoiceState.ERROR
     if (!showRecognitionBubble && !showConversationSheet) return

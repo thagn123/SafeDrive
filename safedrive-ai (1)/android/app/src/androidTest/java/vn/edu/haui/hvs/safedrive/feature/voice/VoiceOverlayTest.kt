@@ -119,7 +119,7 @@ class VoiceOverlayTest {
     // reply/error, not just a generic "Đang xử lý..." spinner (W6.10). ---
 
     @Test
-    fun `successful turnOutcome shows the reply text and a dismiss button`() {
+    fun successfulTurnOutcomeShowsReplyTextAndDismissButton() {
         val voice = FakeVoiceController(VoiceUiState(state = VoiceState.IDLE))
         val tts = FakeTtsController(TtsState.READY)
         val turnOutcome = MutableStateFlow<VoiceTurnOutcome?>(VoiceTurnOutcome.Success("Động cơ đang ở 90 độ C"))
@@ -142,7 +142,7 @@ class VoiceOverlayTest {
     }
 
     @Test
-    fun `failure turnOutcome shows the error message and a dismiss button`() {
+    fun failureTurnOutcomeShowsErrorMessageAndDismissButton() {
         val voice = FakeVoiceController(VoiceUiState(state = VoiceState.IDLE))
         val tts = FakeTtsController(TtsState.READY)
         val turnOutcome = MutableStateFlow<VoiceTurnOutcome?>(VoiceTurnOutcome.Failure("Mất kết nối mạng. Vui lòng kiểm tra lại."))
@@ -161,7 +161,7 @@ class VoiceOverlayTest {
     }
 
     @Test
-    fun `processingState_showsFinalTranscriptWhenPresent`() {
+    fun processingStateShowsFinalTranscriptWhenPresent() {
         val voice = FakeVoiceController(VoiceUiState(state = VoiceState.PROCESSING, finalTranscript = "kiểm tra tốc độ hiện tại"))
         val tts = FakeTtsController(TtsState.READY)
         composeRule.setContent {
@@ -176,7 +176,7 @@ class VoiceOverlayTest {
     // reading it aloud. ---
 
     @Test
-    fun `SPEAKING plus Success shows the real reply text and a stop-reading button, not the generic speaking copy`() {
+    fun speakingSuccessShowsReplyAndStopReadingButton() {
         val voice = FakeVoiceController(VoiceUiState(state = VoiceState.IDLE))
         val tts = FakeTtsController(TtsState.SPEAKING)
         val turnOutcome = MutableStateFlow<VoiceTurnOutcome?>(VoiceTurnOutcome.Success("Động cơ đang ở 90 độ C"))
@@ -197,7 +197,7 @@ class VoiceOverlayTest {
     }
 
     @Test
-    fun `clicking Dung doc while SPEAKING plus Success only stops TTS, it never dismisses the reply`() {
+    fun stopReadingDuringSpeakingKeepsReplyVisible() {
         val voice = FakeVoiceController(VoiceUiState(state = VoiceState.IDLE))
         val tts = FakeTtsController(TtsState.SPEAKING)
         val turnOutcome = MutableStateFlow<VoiceTurnOutcome?>(VoiceTurnOutcome.Success("Động cơ đang ở 90 độ C"))
@@ -223,7 +223,7 @@ class VoiceOverlayTest {
     }
 
     @Test
-    fun `SPEAKING plus Failure shows the real error message, not hidden by the generic speaking copy`() {
+    fun speakingFailureShowsRealErrorMessage() {
         val voice = FakeVoiceController(VoiceUiState(state = VoiceState.IDLE))
         val tts = FakeTtsController(TtsState.SPEAKING)
         val turnOutcome = MutableStateFlow<VoiceTurnOutcome?>(VoiceTurnOutcome.Failure("Mất kết nối mạng. Vui lòng kiểm tra lại."))
@@ -242,7 +242,7 @@ class VoiceOverlayTest {
     }
 
     @Test
-    fun `no turnOutcome and idle mic renders nothing, matching the original idle behavior`() {
+    fun noTurnOutcomeAndIdleMicRendersNothing() {
         val voice = FakeVoiceController(VoiceUiState(state = VoiceState.IDLE))
         val tts = FakeTtsController(TtsState.READY)
         composeRule.setContent {

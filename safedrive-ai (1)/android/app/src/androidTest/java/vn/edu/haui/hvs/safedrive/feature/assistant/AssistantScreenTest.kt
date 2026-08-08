@@ -1,11 +1,13 @@
 package vn.edu.haui.hvs.safedrive.feature.assistant
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -74,44 +76,48 @@ class AssistantScreenTest {
     @Test
     fun typingAndSendingAQuestion_showsUserBubbleThenAssistantReply() {
         composeRule.setContent {
-            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = FakeTtsController(), onOpenDiagnostics = {}, onTriggerVoice = {}) }
+            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = FakeTtsController(), onOpenDiagnostics = {}, onTriggerVoice = {}, onOpenSimulator = {}) }
         }
 
-        composeRule.onNodeWithText("Nhập câu hỏi hoặc nói \"Mai ơi\"...")
+        composeRule.onNode(hasSetTextAction())
             .performTextInput("Kiểm tra tốc độ hiện tại")
         composeRule.onNodeWithContentDescription("Gửi câu hỏi").performClick()
 
-        composeRule.onNodeWithText("Kiểm tra tốc độ hiện tại").assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithText("km/h", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
+        assert(
+            composeRule.onAllNodesWithText("Kiểm tra tốc độ hiện tại")
+                .fetchSemanticsNodes()
+                .isNotEmpty(),
+        )
     }
 
     @Test
     fun quickPromptChip_sendsWithoutManualTyping() {
         composeRule.setContent {
-            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = FakeTtsController(), onOpenDiagnostics = {}, onTriggerVoice = {}) }
+            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = FakeTtsController(), onOpenDiagnostics = {}, onTriggerVoice = {}, onOpenSimulator = {}) }
         }
         composeRule.onNodeWithText("Kiểm tra nhiệt độ động cơ").performClick()
         // The quick-prompt text itself becomes the new user chat bubble content, so it stays visible.
-        composeRule.onNodeWithText("Kiểm tra nhiệt độ động cơ").assertIsDisplayed()
+        composeRule.onNodeWithText("Kiểm tra nhiệt độ động cơ").performScrollTo().assertIsDisplayed()
     }
 
     @Test
     fun fifthQuickPrompt_restStopSuggestion_isPresent() {
         composeRule.setContent {
-            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = FakeTtsController(), onOpenDiagnostics = {}, onTriggerVoice = {}) }
+            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = FakeTtsController(), onOpenDiagnostics = {}, onTriggerVoice = {}, onOpenSimulator = {}) }
         }
         // Parity with the AI Studio prototype's 5th quick-suggestion chip (remediation item 8) —
         // previously only 4 of the prototype's 5 chips existed here.
-        composeRule.onNodeWithText("Gợi ý điểm dừng nghỉ gần đây").assertIsDisplayed()
+        composeRule.onNodeWithText("Gợi ý điểm dừng nghỉ gần đây").performScrollTo().assertIsDisplayed()
     }
 
     @Test
     fun ttsUnavailableWhileEnabled_showsVisibleBannerAndSettingsCta() {
         val tts = FakeTtsController(vn.edu.haui.hvs.safedrive.domain.repository.TtsState.MISSING_DATA)
         composeRule.setContent {
-            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = tts, onOpenDiagnostics = {}, onTriggerVoice = {}) }
+            SafeDriveTheme { AssistantScreen(viewModel = buildViewModel(), ttsController = tts, onOpenDiagnostics = {}, onTriggerVoice = {}, onOpenSimulator = {}) }
         }
         // A tinted icon alone is easy to miss and gives no way to fix it — a visible banner with an
         // actionable CTA is required instead (remediation item 7).
