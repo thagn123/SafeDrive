@@ -55,3 +55,31 @@ environment where the same prompt could be iterated against real responses (mirr
 Ollama-side prompts were built), or when product evidence shows cloud-provider users hit
 `assistant.clarify` often enough that the missing reclassification is a real, measured UX cost
 rather than a theoretical one.
+
+**2026-08-08 — Defer Level-2 recent conversational memory (3–6 turns).**
+Evidence: multi-turn probing against the real `MobileSessionStore` found no use case valuable
+enough to require 2+ turns of generic conversation history. Nine of ten broken follow-ups were
+attributable to one of four other causes:
+1. routing vocabulary gaps (e.g. "còn bao nhiêu pin" failed even as a standalone utterance with
+   no conversation at all),
+2. one-turn referent resolution ("tại sao", "cái đó"),
+3. pending-action refinement ("27 độ đi", "cao hơn nữa"),
+4. missing capabilities such as undo ("thôi hoàn tác"), which is Capability + Action Authority,
+   not chat memory.
+Only explicit topic re-entry ("quay lại chuyện điều hòa") required deeper history, and that one
+contrived case does not justify the complexity of a general recent-turn memory subsystem. Full
+evidence in `SLICE7_SCOPING_CONVERSATIONAL_CONTEXT.md`.
+**Revisit when:** real driver/demo transcripts show recurring failures where the user refers to
+context older than the immediately previous turn, the information cannot be represented as a
+structured referent / pending action / capability state, and the failure materially harms driving
+UX. Until then, prefer structured state over raw chat history.
+
+**2026-08-08 — Energy figure in `assistant.vehicle_status` is conditional on the question.**
+The route states `energyPercent` only when `IntentResolution.asked_about_energy` is set, not on
+every status reply. Why: the deterministic reply text is the narrator's approved-number set
+(`app/mobile/llm.py`, `require_approved_numbers` — every number in the deterministic reply must
+reappear in the LLM rewrite). Stating energy unconditionally would oblige every narrated
+vehicle-status reply to repeat it, raising the narration rejection rate and silently changing
+LLM behavior repo-wide for what was scoped as a routing fix. This was caught by
+`test_genuinely_ambiguous_clarify_can_be_reclassified_by_advisory_llm` failing on the first
+implementation attempt.
