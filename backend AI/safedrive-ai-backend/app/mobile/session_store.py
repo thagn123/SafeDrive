@@ -840,7 +840,35 @@ class MobileSessionStore:
             state.passengerResponse,
             signals.userReportedFatigue,
             dtc_severity,
+            MobileSessionStore._engine_temperature_safety_band(state.engineTemperatureC),
         )
+
+    @staticmethod
+    def _engine_temperature_safety_band(engine_temperature_c: float) -> str:
+        """Coarse engine-temperature band ("NORMAL"/"WARNING"/"CRITICAL") for the HVAC
+        dependency fingerprint above.
+
+        Deliberately the *band*, not the raw reading: engine temperature drifts by a fraction
+        of a degree on every telemetry sample, so fingerprinting the raw float would invalidate
+        every pending comfort proposal continuously and make confirmation unusable. What
+        actually changes whether a comfort action is still safe to execute is crossing a
+        SafetyRiskEngine threshold, so that -- and only that -- is what this contributes.
+
+        Closes the gap where an HVAC proposal issued at a safe engine temperature stayed
+        confirmable after the engine crossed into HIGH/CRITICAL. IntentResolver already refuses
+        to *reaffirm* such a proposal through short-turn dialogue, but that is a routing-layer
+        guard; this puts the same protection at the action-authority layer, where a confirmation
+        arriving by any path (including a client replaying an old action ID) is validated.
+
+        Thresholds are read from SafetyRiskEngine rather than duplicated, so the fingerprint can
+        never silently disagree with the risk engine about where the boundaries are.
+        """
+
+        if engine_temperature_c >= SafetyRiskEngine.ENGINE_CRITICAL_C:
+            return "CRITICAL"
+        if engine_temperature_c >= SafetyRiskEngine.ENGINE_WARNING_C:
+            return "WARNING"
+        return "NORMAL"
 
     def _rebind_issued_actions(
         self,

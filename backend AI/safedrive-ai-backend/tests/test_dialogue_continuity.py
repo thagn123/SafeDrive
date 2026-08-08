@@ -20,6 +20,7 @@ from app.api.schemas.mobile import (
     AssistantQueryRequest,
     StartSessionRequest,
 )
+from app.mobile.safety import SafetyRiskEngine
 from app.mobile.session_store import MobileSessionStore
 from tests.test_mobile_safety_core import make_request
 
@@ -283,3 +284,108 @@ async def test_expired_pending_dialogue_ttl_cannot_be_reused() -> None:
 
     reply = await store.answer_assistant(_ask(session_id, "ok", "req-final"))
     assert reply.message.route == "assistant.general"
+
+
+# --- P0-C: engine-temperature safety band participates in action authority ---
+#
+# Regression for the gap where an HVAC proposal issued at a safe engine temperature stayed
+# confirmable after the engine crossed into HIGH/CRITICAL. IntentResolver already refuses to
+# reaffirm such a proposal through short-turn dialogue, but that is the routing layer; these
+# tests pin the protection at the action-authority layer, where confirm_action() validates a
+# confirmation arriving by any path.
+
+
+@pytest.mark.asyncio
+async def test_engine_going_critical_rejects_confirmation_of_an_older_comfort_action() -> None:
+    clock_ms = [0]
+    store = MobileSessionStore(clock=lambda: clock_ms[0])
+    session_id = await _start(store, now_ms=clock_ms[0])
+    await store.update_state(
+        make_request(updated_at_ms=clock_ms[0], engine_temperature=95.0).model_copy(
+            update={"sessionId": session_id, "clientEventId": "evt-1"}
+        )
+    )
+    proposal = await store.answer_assistant(_ask(session_id, "Lanh qua", "req-1"))
+    action = proposal.message.actions[0]
+    assert action.type == "SET_HVAC_TEMPERATURE"
+
+    clock_ms[0] += 2_000
+    latest = await store.update_state(
+        make_request(updated_at_ms=clock_ms[0], engine_temperature=118.0).model_copy(
+            update={"sessionId": session_id, "clientEventId": "evt-2"}
+        )
+    )
+
+    clock_ms[0] += 1_000
+    confirmed = await store.confirm_action(
+        ActionConfirmRequest(
+            sessionId=session_id,
+            actionId=action.id,
+            actionType=action.type,
+            hvacTargetTemperatureC=action.hvacTargetTemperatureC,
+            confirmed=True,
+            confirmationId="confirm-critical",
+            # The CURRENT version, deliberately: passing a stale contextVersion would be
+            # rejected by confirm_action()'s first guard and this test would pass without
+            # exercising the fingerprint at all.
+            contextVersion=latest.stateVersion,
+        )
+    )
+
+    assert confirmed.accepted is False
+    # Must be rejected by the issued-action/fingerprint guard, not the context-version guard.
+    assert confirmed.message == "This action was not issued for the current vehicle context."
+    # No canonical state mutation on rejection.
+    session_state = await store.get_state(session_id)
+    assert session_state.state.hvacTargetTemperatureC != action.hvacTargetTemperatureC
+
+
+@pytest.mark.asyncio
+async def test_ordinary_engine_temperature_drift_does_not_invalidate_a_pending_action() -> None:
+    """The fingerprint carries the safety *band*, not the raw reading -- otherwise every
+    telemetry sample would invalidate every pending comfort proposal and confirmation would be
+    unusable in practice."""
+
+    clock_ms = [0]
+    store = MobileSessionStore(clock=lambda: clock_ms[0])
+    session_id = await _start(store, now_ms=clock_ms[0])
+    await store.update_state(
+        make_request(updated_at_ms=clock_ms[0], engine_temperature=88.0).model_copy(
+            update={"sessionId": session_id, "clientEventId": "evt-1"}
+        )
+    )
+    proposal = await store.answer_assistant(_ask(session_id, "Lanh qua", "req-1"))
+    action = proposal.message.actions[0]
+
+    clock_ms[0] += 2_000
+    latest = await store.update_state(
+        make_request(updated_at_ms=clock_ms[0], engine_temperature=93.4).model_copy(
+            update={"sessionId": session_id, "clientEventId": "evt-2"}
+        )
+    )
+
+    clock_ms[0] += 1_000
+    confirmed = await store.confirm_action(
+        ActionConfirmRequest(
+            sessionId=session_id,
+            actionId=action.id,
+            actionType=action.type,
+            hvacTargetTemperatureC=action.hvacTargetTemperatureC,
+            confirmed=True,
+            confirmationId="confirm-drift",
+            contextVersion=latest.stateVersion,
+        )
+    )
+
+    assert confirmed.accepted is True
+
+
+def test_engine_temperature_safety_band_matches_safety_engine_thresholds() -> None:
+    band = MobileSessionStore._engine_temperature_safety_band
+
+    assert band(88.0) == "NORMAL"
+    assert band(SafetyRiskEngine.ENGINE_WARNING_C - 0.1) == "NORMAL"
+    assert band(SafetyRiskEngine.ENGINE_WARNING_C) == "WARNING"
+    assert band(SafetyRiskEngine.ENGINE_CRITICAL_C - 0.1) == "WARNING"
+    assert band(SafetyRiskEngine.ENGINE_CRITICAL_C) == "CRITICAL"
+    assert band(130.0) == "CRITICAL"
