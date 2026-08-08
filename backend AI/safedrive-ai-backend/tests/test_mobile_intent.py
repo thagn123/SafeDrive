@@ -120,6 +120,34 @@ def test_compound_hot_cabin_and_enable_ac_uses_context_aware_comfort_route() -> 
     assert result.route == "comfort.too_hot"
 
 
+def test_cold_cabin_complaint_uses_context_aware_comfort_route() -> None:
+    # Symmetric to test_compound_hot_cabin_and_enable_ac_uses_context_aware_comfort_route:
+    # cold-discomfort phrasing must not fall through to assistant.general, which can
+    # never create an HVAC action (see app/mobile/intent.py's comfort.too_cold branch).
+    request = make_request(cabin_temperature=16.0)
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+
+    result = IntentResolver().resolve("Lạnh quá", snapshot, safety)
+
+    assert result.route == "comfort.too_cold"
+    assert result.confidence == 0.92
+
+
+def test_cold_keyword_ret_also_routes_to_comfort_too_cold() -> None:
+    request = make_request(cabin_temperature=16.0)
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+
+    result = IntentResolver().resolve("Tôi thấy rét quá", snapshot, safety)
+
+    assert result.route == "comfort.too_cold"
+
+
 def test_natural_fault_question_is_recognized_without_exact_demo_keyword() -> None:
     request = make_request(dtc_severity="HIGH")
     snapshot = MobileContextBuilder().build(

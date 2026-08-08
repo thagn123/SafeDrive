@@ -304,6 +304,33 @@ def test_general_catchall_is_a_contextual_fallback_not_a_bare_refusal() -> None:
     assert "km/h" in text
 
 
+# --- comfort.too_cold: symmetric to comfort.too_hot (Agent Armor Slice 1) ---
+
+
+def test_cold_complaint_grounds_cabin_and_energy_and_proposes_hvac_action() -> None:
+    text, actions = plan_reply("Lạnh quá", cabin_temperature=16.0)
+
+    assert "16" in text
+    assert "24" in text  # energyPercent from make_request's default (24%)
+    assert len(actions) == 1
+    assert actions[0].type == "SET_HVAC_TEMPERATURE"
+    assert actions[0].requiresConfirmation is True
+
+
+def test_cold_complaint_uses_a_modest_target_when_energy_is_low() -> None:
+    request = make_request(cabin_temperature=16.0)
+    low_energy_state = request.state.model_copy(update={"energyPercent": 15})
+    request = request.model_copy(update={"state": low_energy_state})
+    snapshot = MobileContextBuilder().build(request, state_version=1, now_ms=request.state.updatedAtMs)
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+    resolution = IntentResolver().resolve("Lạnh quá", snapshot, safety)
+
+    text, actions = ContextAwareAssistant().build_reply(resolution, snapshot, safety, "req_cold_low_energy")
+
+    assert actions[0].hvacTargetTemperatureC == 24.0
+    assert "24" in text
+
+
 # --- ContextAwareAssistant.required_narration_snippets: mirrors _message_and_actions ---
 
 

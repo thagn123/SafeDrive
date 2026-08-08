@@ -32,7 +32,7 @@ from app.mobile.context import ContextPack, ContextSnapshot, MobileContextBuilde
 from app.mobile.emergency import RescueBriefBuilder, SimulatedRescueGateway
 from app.mobile.emergency_reasoner import EmergencyLLMReasoner
 from app.mobile.intent import DTC_CODE_PATTERN, IntentResolution
-from app.mobile.llm import OllamaIntentClassifier, OllamaNarrator
+from app.mobile.llm import NarrationProvider, OllamaIntentClassifier
 from app.mobile.safety import SafetyEvaluation, SafetyRiskEngine
 from app.mobile.state_bridge import MobileStateBridge
 
@@ -50,6 +50,11 @@ SESSION_TTL_MS = 60 * 60 * 1_000
 VERIFYING_EVIDENCE_MS = 5_000
 AWAITING_USER_RESPONSE_MS = 15_000
 FINAL_COUNTDOWN_MS = 10_000
+# Purely defensive cap on MobileSession.engine_temperature_samples, independent of
+# MobileContextBuilder.ENGINE_TREND_WINDOW_MS's time-based trim -- guards against a
+# pathological client sending updates far faster than the ~4s heartbeat cadence, never a
+# factor in normal operation (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 4).
+_ENGINE_TREND_MAX_SAMPLES = 100
 _TERMINAL_EMERGENCY_STATES = frozenset({"CANCELLED", "SOS_SIMULATED_SENT"})
 # Risk level and emergency-candidate status (both checked in _can_narrate) already gate
 # narration for every route below to LOW/MEDIUM, non-emergency turns -- HIGH/CRITICAL
@@ -92,6 +97,11 @@ class MobileSession:
     emergency: EmergencySnapshot
     last_update: StateUpdateRequest | None
     issued_actions: dict[str, IssuedAction]
+    # Bounded, in-memory-only recent history for the engine-temperature trend (see
+    # SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 4): (timestamp_ms, engineTemperatureC), oldest first,
+    # trimmed to MobileContextBuilder.ENGINE_TREND_WINDOW_MS on every append in update_state().
+    # Never persisted; lost on session expiry/process restart like the rest of MobileSession.
+    engine_temperature_samples: list[tuple[int, float]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +127,7 @@ class MobileSessionStore:
         context_builder: MobileContextBuilder | None = None,
         safety_engine: SafetyRiskEngine | None = None,
         assistant: ContextAwareAssistant | None = None,
-        narrator: OllamaNarrator | None = None,
+        narrator: NarrationProvider | None = None,
         classifier: OllamaIntentClassifier | None = None,
         reasoner: EmergencyLLMReasoner | None = None,
         rescue_brief_builder: RescueBriefBuilder | None = None,
@@ -162,6 +172,7 @@ class MobileSessionStore:
             ),
             last_update=None,
             issued_actions={},
+            engine_temperature_samples=[],
         )
         async with self._lock:
             self._purge_expired_sessions(created_at)
@@ -211,6 +222,12 @@ class MobileSessionStore:
                 acceptedAtMs=accepted_at,
             )
             session.last_update = request
+            if snapshot.state_is_fresh:
+                self._record_engine_temperature_sample(
+                    session,
+                    timestamp_ms=request.state.updatedAtMs,
+                    temperature_c=request.state.engineTemperatureC,
+                )
             session.issued_actions = self._rebind_issued_actions(
                 session.issued_actions,
                 request,
@@ -472,6 +489,7 @@ class MobileSessionStore:
                 session.last_update,
                 state_version=session.state.stateVersion,
                 now_ms=started_at,
+                engine_temperature_samples=session.engine_temperature_samples,
             )
             safety = self._safety_engine.evaluate(snapshot, now_ms=started_at)
             completed_at = self._now_ms()
@@ -710,6 +728,31 @@ class MobileSessionStore:
         handlers to translate ``MobileApiError`` automatically."""
         async with self._lock:
             return self._require_session(session_id)
+
+    @staticmethod
+    def _record_engine_temperature_sample(
+        session: MobileSession, *, timestamp_ms: int, temperature_c: float
+    ) -> None:
+        """Appends one engine-temperature sample and trims to the trend window
+        (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 4). Called only from update_state(), only when the
+        just-accepted state is itself fresh (mirrors the same freshness gate the rest of the
+        session already applies) -- this is retention/bookkeeping only, never a safety decision,
+        and never read by SafetyRiskEngine.
+
+        Rejects a sample whose timestamp does not strictly advance the last stored one (clock
+        skew, replay, or a duplicate/out-of-order client event): appending is silently skipped in
+        that case rather than raising, since a single malformed sample must never break state
+        ingestion. app/mobile/context.py's derive_engine_temperature_trend independently applies
+        the same guard, so this is defense-in-depth, not the only line protecting it.
+        """
+
+        history = session.engine_temperature_samples
+        if history and timestamp_ms <= history[-1][0]:
+            return
+        history.append((timestamp_ms, temperature_c))
+        cutoff_ms = timestamp_ms - MobileContextBuilder.ENGINE_TREND_WINDOW_MS
+        trimmed = [sample for sample in history if sample[0] >= cutoff_ms]
+        session.engine_temperature_samples = trimmed[-_ENGINE_TREND_MAX_SAMPLES:]
 
     def _purge_expired_sessions(self, timestamp: int) -> None:
         expired_ids = [

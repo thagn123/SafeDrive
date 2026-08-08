@@ -133,6 +133,16 @@ class IntentResolver:
                 hypotheses=(IntentHypothesis("climate.enable_default", 0.92),),
                 hvac_target_temperature_c=target,
             )
+        # Symmetric to comfort.too_hot above: a driver reporting cold discomfort
+        # (e.g. "Lanh qua") gets the same context-aware HVAC comfort path in the
+        # opposite direction, instead of falling through to assistant.general,
+        # which can never create an action. Checked *after* _GENERIC_HVAC_COMMANDS
+        # above, not before: "lanh" is also a substring of "may lanh" ("air
+        # conditioner", e.g. "bat may lanh"/"turn on the AC"), so the more specific
+        # multi-word HVAC-toggle phrases must win first, or a plain request to turn
+        # on the AC would be misread as a cold complaint.
+        if self._contains(normalized, "lanh", "ret", "buot", "cold", "freezing"):
+            return self._single("comfort.too_cold", 0.92)
         if self._contains(normalized, "buon ngu", "ngu gat", "met", "sleepy", "tired"):
             return self._single("safety.driver_fatigue", 0.95)
         if self._contains(

@@ -13,7 +13,7 @@ import logging
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 import httpx
 
@@ -212,6 +212,49 @@ def _bare_context_numbers(
         if isinstance(target, (int, float)) and not isinstance(target, bool):
             numbers.add(_normalize_number_token(str(target)))
     return numbers
+
+
+@runtime_checkable
+class NarrationProvider(Protocol):
+    """Structural contract shared by every narration provider below (Ollama, Gemini,
+    Vertex AI, and any future addition) -- see SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 2.
+
+    None of the three concrete classes below subclass this explicitly: PEP 544
+    structural typing means each already satisfies it by having the right
+    attributes/methods, exactly as ``MobileSessionStore`` has relied on by convention
+    since these classes were first duck-typed against each other. Declaring this
+    Protocol changes no runtime behavior -- it only makes that already-true
+    structural fact checkable (by mypy, and by a runtime ``isinstance`` contract
+    test) instead of implicit. Swapping providers must never require touching
+    ``app/mobile/safety.py``, ``app/mobile/intent.py``, ``app/mobile/assistant.py``,
+    ``app/mobile/session_store.py``'s validation logic, or any Android file -- only
+    this shape.
+    """
+
+    provider_name: ClassVar[str]
+    model: str
+
+    async def rewrite_grounded_reply(
+        self,
+        *,
+        user_text: str,
+        approved_reply: str,
+        context_pack: ContextPack,
+        risk_level: str,
+        risk_reasons: tuple[str, ...],
+        allowed_actions: list[dict[str, object]],
+        required_verbatim_snippets: tuple[str, ...] = (),
+    ) -> str | None: ...
+
+    async def answer_open_query(
+        self,
+        *,
+        user_text: str,
+        deterministic_fallback: str,
+        context_pack: ContextPack,
+        risk_level: str,
+        risk_reasons: tuple[str, ...],
+    ) -> str | None: ...
 
 
 @dataclass(frozen=True, slots=True)

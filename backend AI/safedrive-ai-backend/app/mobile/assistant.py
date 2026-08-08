@@ -205,6 +205,19 @@ class ContextAwareAssistant:
                 [ContextAwareAssistant._hvac_action(target, request_id)],
             )
 
+        if route == "comfort.too_cold":
+            # Symmetric to comfort.too_hot: warm the cabin instead of cooling it,
+            # still capped to a modest target when energy is low rather than
+            # pushing all the way to the top of the supported HVAC range.
+            target = 24.0 if state.energyPercent <= 20 else 26.0
+            return (
+                (
+                    f"Cabin hiện ở {_fmt_temp(state.cabinTemperatureC)} độ C và mức năng lượng là {state.energyPercent}%. "
+                    f"Tôi đề xuất đặt HVAC về {_fmt_temp(target)} độ C để làm ấm dần, thay vì tăng quá cao khi năng lượng thấp."
+                ),
+                [ContextAwareAssistant._hvac_action(target, request_id)],
+            )
+
         if route == "vehicle.fault_concern":
             mentioned_code = resolution.mentioned_dtc_code
             if mentioned_code is not None:
@@ -303,10 +316,12 @@ class ContextAwareAssistant:
             engine_clause = (
                 f", động cơ {_fmt_temp(state.engineTemperatureC)} độ C" if engine_overheating else ""
             )
+            trend_clause = ContextAwareAssistant._engine_temperature_trend_clause(snapshot)
             return (
                 (
                     f"{headline} Tốc độ hiện tại {state.speedKmh:.0f} km/h, cabin "
-                    f"{_fmt_temp(state.cabinTemperatureC)} độ C{engine_clause}.{dtc_clause}{duration_clause}"
+                    f"{_fmt_temp(state.cabinTemperatureC)} độ C{engine_clause}."
+                    f"{dtc_clause}{duration_clause}{trend_clause}"
                 ),
                 ContextAwareAssistant._actions(safety, request_id),
             )
@@ -436,6 +451,33 @@ class ContextAwareAssistant:
         if route == "assistant.vehicle_status" and safety.risk.level != "LOW":
             return (safety.risk.title,)
         return ()
+
+    @staticmethod
+    def _engine_temperature_trend_clause(snapshot: ContextSnapshot) -> str:
+        """Speaks only the "rising" direction of the derived engine-temperature trend
+        (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 4) -- "stable"/"falling" are present in
+        ContextSnapshot/ContextPack (and so available to a narrator) but this deterministic
+        template only proactively calls out "rising", the one direction worth surfacing in a
+        status answer. Absent/UNAVAILABLE trend (insufficient or untrustworthy recent evidence,
+        per app/mobile/context.py's derive_engine_temperature_trend) silently returns "",
+        preserving today's exact assistant.vehicle_status wording unchanged."""
+
+        direction_value = snapshot.values.get("vehicle.engine_temperature_trend_direction")
+        delta_value = snapshot.values.get("vehicle.engine_temperature_trend_delta_c")
+        window_value = snapshot.values.get("vehicle.engine_temperature_trend_window_seconds")
+        if (
+            direction_value is None
+            or delta_value is None
+            or window_value is None
+            or direction_value.status != "FRESH"
+            or direction_value.value != "rising"
+        ):
+            return ""
+        minutes = max(1, round(float(window_value.value) / 60))
+        return (
+            f" Nhiệt độ động cơ đang tăng khoảng {_fmt_temp(abs(float(delta_value.value)))} độ C "
+            f"trong khoảng {minutes} phút gần đây."
+        )
 
     @staticmethod
     def _fatigue_situation(state: VehicleState, safety: SafetyEvaluation) -> str:
