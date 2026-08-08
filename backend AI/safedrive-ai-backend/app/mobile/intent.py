@@ -228,6 +228,8 @@ class IntentResolver:
             normalized,
             "tinh trang xe",
             "xe the nao",
+            "xe cua toi the nao",
+            "xe cua toi hien tai the nao",
             "thong tin xe",
             "vehicle status",
             "tinh hinh hien tai",

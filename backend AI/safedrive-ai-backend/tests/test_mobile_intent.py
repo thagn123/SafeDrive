@@ -365,6 +365,14 @@ def test_existing_vehicle_status_phrasing_still_routes_unchanged() -> None:
     assert _resolve("Tình trạng xe thế nào").route == "assistant.vehicle_status"
 
 
+def test_natural_current_vehicle_status_stage_phrase_routes_to_vehicle_status() -> None:
+    assert _resolve("Xe của tôi hiện tại thế nào?").route == "assistant.vehicle_status"
+
+
+def test_natural_my_vehicle_status_phrase_routes_to_vehicle_status() -> None:
+    assert _resolve("Xe của tôi thế nào?").route == "assistant.vehicle_status"
+
+
 def test_comfort_complaint_mentioning_battery_still_wins_over_status() -> None:
     """Ordering guard: the energy terms sit *after* the climate/comfort/fatigue/fault routes,
     so a discomfort report that also mentions energy must still be handled as discomfort."""
