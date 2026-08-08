@@ -46,6 +46,48 @@ class IntentResolution:
     # field lets ContextAwareAssistant look up the *specific* code asked about instead
     # of always reporting whichever active DTC happens to be primary.
     mentioned_dtc_code: str | None = None
+    # True only when the driver explicitly asked about battery/energy
+    # (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 7). Kept as a flag rather than a separate route so
+    # the reply stays the existing assistant.vehicle_status template; it only adds the one
+    # figure that was actually asked for. Deliberately NOT set for other vehicle-status
+    # phrasings: the deterministic reply is the narrator's approved-number set (see
+    # app/mobile/llm.py's require_approved_numbers), so stating energy unconditionally would
+    # force every narrated status reply to repeat it and raise the narration rejection rate.
+    asked_about_energy: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PendingDialogue:
+    """Short-turn dialogue continuity only (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 6) -- NOT
+    long-term memory. Carries just enough from the single most recently issued HVAC action
+    (app.mobile.session_store.MobileSession.issued_actions) for a short affirmative/negative
+    reply to be resolved. Always derived fresh from that dict on every turn, never stored
+    independently -- it inherits that dict's existing scope/expiry (full replacement every
+    answer_assistant() call, and dropped early by _rebind_issued_actions when a telemetry
+    change invalidates the action's dependency fingerprint)."""
+
+    hvac_target_temperature_c: float
+
+
+_AFFIRMATIVE_SHORT_REPLIES = frozenset(
+    {"co", "ok", "okay", "duoc", "u", "uh", "dong y", "yes"}
+)
+_NEGATIVE_SHORT_REPLIES = frozenset({"khong", "thoi", "khoi", "no", "cancel"})
+
+
+def _classify_short_reply(normalized: str) -> str | None:
+    """Deterministic exact-match only against a short, fixed reply vocabulary -- deliberately
+    NOT a substring/keyword search like every other route below (IntentResolver._contains),
+    and deliberately not a general Vietnamese NLU dictionary. A longer sentence that happens
+    to contain "co" or "khong" as a substring (e.g. a vehicle-status question) must never be
+    misread as a yes/no answer, so the whole trimmed utterance must equal one of these words."""
+
+    stripped = normalized.strip(" .!?,")
+    if stripped in _AFFIRMATIVE_SHORT_REPLIES:
+        return "AFFIRMATIVE"
+    if stripped in _NEGATIVE_SHORT_REPLIES:
+        return "NEGATIVE"
+    return None
 
 
 class IntentResolver:
@@ -87,8 +129,33 @@ class IntentResolver:
         text: str,
         snapshot: ContextSnapshot,
         safety: SafetyEvaluation,
+        *,
+        pending_dialogue: PendingDialogue | None = None,
     ) -> IntentResolution:
         normalized = normalize_text(text)
+        # Short-turn dialogue continuity (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 6) is checked
+        # first, but only ever matches the tiny fixed reply vocabulary above -- it can never
+        # collide with the keyword routes below. Gated on safety exactly like _can_narrate/
+        # _can_classify already gate narration/reclassification: an active emergency or
+        # already-HIGH/CRITICAL risk must never let a stale comfort dialogue be silently
+        # reaffirmed (e.g. engine temperature going CRITICAL between propose and "ok" is not
+        # covered by the HVAC action's dependency fingerprint, so this is the layer that
+        # closes that gap for this specific path).
+        if (
+            pending_dialogue is not None
+            and not safety.emergency_candidate
+            and safety.risk.level not in {"HIGH", "CRITICAL"}
+        ):
+            reply_kind = _classify_short_reply(normalized)
+            if reply_kind == "AFFIRMATIVE":
+                return IntentResolution(
+                    route="dialogue.affirmed",
+                    confidence=0.97,
+                    hypotheses=(IntentHypothesis("dialogue.affirmed", 0.97),),
+                    hvac_target_temperature_c=pending_dialogue.hvac_target_temperature_c,
+                )
+            if reply_kind == "NEGATIVE":
+                return self._single("dialogue.declined", 0.97)
         if self._contains(normalized, "sos", "cuu ho", "cap cuu", "emergency", "help"):
             return self._single("safety.emergency_request", 0.98)
         # Matched against the *raw* text (case-insensitive), not the accent-stripped/
@@ -175,6 +242,20 @@ class IntentResolver:
             "how long have i been driving",
         ):
             return self._single("assistant.vehicle_status", 0.9)
+        # Explicit energy/battery questions (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 7). These were
+        # falling to assistant.general even as fully self-contained utterances ("con bao nhieu
+        # pin") -- a routing vocabulary gap, not a conversation-memory gap. Same route as above,
+        # but flagged so the reply adds the energy figure; kept as its own branch precisely so
+        # the other vehicle-status phrasings keep their existing wording byte-for-byte.
+        # Placed after the climate/comfort/fatigue/fault routes, so a discomfort or HVAC
+        # sentence that merely mentions energy is still handled by those.
+        if self._contains(normalized, "pin", "nang luong", "battery"):
+            return IntentResolution(
+                route="assistant.vehicle_status",
+                confidence=0.9,
+                hypotheses=(IntentHypothesis("assistant.vehicle_status", 0.9),),
+                asked_about_energy=True,
+            )
         if self._contains(
             normalized,
             "khong on",

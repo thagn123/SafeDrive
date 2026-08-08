@@ -328,3 +328,55 @@ def test_sos_keyword_still_wins_over_a_dtc_shaped_code_in_the_same_message() -> 
     result = IntentResolver().resolve("SOS xe bao loi U0100 giup toi", snapshot, safety)
 
     assert result.route == "safety.emergency_request"
+
+
+# --- Slice 7: explicit energy/battery questions are a routing gap, not a memory gap ---
+#
+# Each of these is fully self-contained -- no conversation history is involved -- yet all of
+# them fell to assistant.general before this slice. See SLICE7_SCOPING_CONVERSATIONAL_CONTEXT.md.
+
+
+def _resolve(text: str, **kwargs: object):
+    request = make_request(**kwargs)  # type: ignore[arg-type]
+    snapshot = MobileContextBuilder().build(
+        request, state_version=1, now_ms=request.state.updatedAtMs
+    )
+    safety = SafetyRiskEngine().evaluate(snapshot, now_ms=request.state.updatedAtMs)
+    return IntentResolver().resolve(text, snapshot, safety)
+
+
+def test_explicit_battery_question_routes_to_vehicle_status() -> None:
+    assert _resolve("Còn bao nhiêu pin?").route == "assistant.vehicle_status"
+
+
+def test_battery_question_with_leading_noun_routes_to_vehicle_status() -> None:
+    assert _resolve("Pin còn bao nhiêu?").route == "assistant.vehicle_status"
+
+
+def test_explicit_energy_level_question_routes_to_vehicle_status() -> None:
+    assert _resolve("Mức năng lượng còn bao nhiêu?").route == "assistant.vehicle_status"
+
+
+def test_english_battery_question_routes_to_vehicle_status() -> None:
+    assert _resolve("Battery còn bao nhiêu?").route == "assistant.vehicle_status"
+
+
+def test_existing_vehicle_status_phrasing_still_routes_unchanged() -> None:
+    assert _resolve("Tình trạng xe thế nào").route == "assistant.vehicle_status"
+
+
+def test_comfort_complaint_mentioning_battery_still_wins_over_status() -> None:
+    """Ordering guard: the energy terms sit *after* the climate/comfort/fatigue/fault routes,
+    so a discomfort report that also mentions energy must still be handled as discomfort."""
+
+    assert _resolve("Nóng quá, pin còn bao nhiêu?").route == "comfort.too_hot"
+
+
+def test_hvac_command_mentioning_energy_still_routes_to_climate() -> None:
+    assert _resolve("Đặt điều hòa 23 độ C, năng lượng còn nhiều không?").route == (
+        "climate.set_temperature"
+    )
+
+
+def test_unrelated_utterance_is_not_overmatched_into_vehicle_status() -> None:
+    assert _resolve("Hôm nay trời đẹp nhỉ").route == "assistant.general"

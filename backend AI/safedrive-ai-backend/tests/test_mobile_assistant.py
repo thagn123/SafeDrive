@@ -245,6 +245,26 @@ def test_vehicle_status_still_grounds_speed_and_duration_numbers() -> None:
     assert "20 phút" in text
 
 
+def test_vehicle_status_grounds_the_energy_value_it_was_asked_for() -> None:
+    """Slice 7: routing an explicit battery question here is only useful if the reply actually
+    states the number. energyPercent is 24 in this module's make_request()."""
+
+    text, _ = plan_reply("Còn bao nhiêu pin?")
+
+    assert "24%" in text
+
+
+def test_stale_state_never_invents_an_energy_percentage() -> None:
+    """The state_is_fresh guard at the top of _message_and_actions must intercept before the
+    vehicle-status branch, so a stale snapshot asks for a refresh instead of quoting energy."""
+
+    now = int(time.time() * 1_000)
+    text, _ = plan_reply("Còn bao nhiêu pin?", now_ms=now, updated_at_ms=now - 600_000)
+
+    assert "24%" not in text
+    assert "cập nhật trạng thái xe mới" in text
+
+
 def test_vehicle_status_leads_with_engine_overheat_headline() -> None:
     text, _ = plan_reply("Tinh trang xe the nao", engine_temperature=118.0)
 

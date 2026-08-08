@@ -31,7 +31,7 @@ from app.mobile.assistant import AssistantPlan, ContextAwareAssistant
 from app.mobile.context import ContextPack, ContextSnapshot, MobileContextBuilder
 from app.mobile.emergency import RescueBriefBuilder, SimulatedRescueGateway
 from app.mobile.emergency_reasoner import EmergencyLLMReasoner
-from app.mobile.intent import DTC_CODE_PATTERN, IntentResolution
+from app.mobile.intent import DTC_CODE_PATTERN, IntentResolution, PendingDialogue
 from app.mobile.llm import NarrationProvider, OllamaIntentClassifier
 from app.mobile.safety import SafetyEvaluation, SafetyRiskEngine
 from app.mobile.state_bridge import MobileStateBridge
@@ -55,6 +55,14 @@ FINAL_COUNTDOWN_MS = 10_000
 # pathological client sending updates far faster than the ~4s heartbeat cadence, never a
 # factor in normal operation (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 4).
 _ENGINE_TREND_MAX_SAMPLES = 100
+# Short-turn dialogue continuity only (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 6) -- the smallest
+# explicit TTL on top of the existing per-turn-replacement/dependency-fingerprint invalidation
+# below. Without this, an "ok" arriving minutes later would still resolve as long as none of
+# the dependency fingerprint's fields happened to change in the meantime (plausible if
+# telemetry is quiet), which is exactly the "stale ok executes an old request" case this slice
+# must prevent. 60s is generous for a genuine immediate follow-up reply, far short of anything
+# that could be called memory.
+_DIALOGUE_CONTINUITY_TTL_MS = 60_000
 _TERMINAL_EMERGENCY_STATES = frozenset({"CANCELLED", "SOS_SIMULATED_SENT"})
 # Risk level and emergency-candidate status (both checked in _can_narrate) already gate
 # narration for every route below to LOW/MEDIUM, non-emergency turns -- HIGH/CRITICAL
@@ -115,6 +123,11 @@ class IssuedAction:
     # affect its safety/comfort basis (for example speed or GPS updates). The
     # server owns this fingerprint; clients can never supply or alter it.
     dependency_fingerprint: tuple[object, ...] | None
+    # Server clock at issuance, used only to bound short-turn dialogue continuity
+    # (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 6 -- see _DIALOGUE_CONTINUITY_TTL_MS and
+    # MobileSessionStore._pending_dialogue). Not used by confirm_action()'s own validation,
+    # which already has its own independent state-version/dependency-fingerprint checks.
+    issued_at_ms: int
 
 
 class MobileSessionStore:
@@ -492,6 +505,10 @@ class MobileSessionStore:
                 engine_temperature_samples=session.engine_temperature_samples,
             )
             safety = self._safety_engine.evaluate(snapshot, now_ms=started_at)
+            # Read BEFORE this turn's session.issued_actions reassignment below overwrites it --
+            # this captures the *previous* turn's single pending HVAC proposal, if any (SAFEDRIVE_
+            # AGENT_ARMOR_PLAN.md Slice 6, short-turn dialogue continuity only).
+            pending_dialogue = self._pending_dialogue(session, now_ms=started_at)
             completed_at = self._now_ms()
             plan = self._assistant.answer(
                 request,
@@ -499,6 +516,7 @@ class MobileSessionStore:
                 safety,
                 started_at_ms=started_at,
                 completed_at_ms=completed_at,
+                pending_dialogue=pending_dialogue,
             )
             # Confirmation requests are accepted only when they refer to an
             # action the server issued for this exact state version. This is a
@@ -511,6 +529,7 @@ class MobileSessionStore:
                     dependency_fingerprint=self._action_dependency_fingerprint(
                         action.type, session.last_update
                     ),
+                    issued_at_ms=completed_at,
                 )
                 for action in plan.response.message.actions
             }
@@ -706,6 +725,7 @@ class MobileSessionStore:
                     dependency_fingerprint=self._action_dependency_fingerprint(
                         action.type, session.last_update
                     ),
+                    issued_at_ms=completed_at,
                 )
                 for action in actions
             }
@@ -762,6 +782,35 @@ class MobileSessionStore:
         ]
         for session_id in expired_ids:
             self._sessions.pop(session_id, None)
+
+    @staticmethod
+    def _pending_dialogue(session: MobileSession, *, now_ms: int) -> PendingDialogue | None:
+        """Short-turn dialogue continuity only (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 6) -- NOT
+        long-term memory. A short affirmative/negative reply may only ever be resolved against
+        the single most recently issued HVAC action from the immediately preceding turn, never
+        anything older and never any other action type in this slice (SUGGEST_REST_STOP/
+        START_SOS_COUNTDOWN confirmations are out of scope here -- see FUTURE WORK).
+
+        Deliberately reuses session.issued_actions instead of introducing a separate stored
+        structure: that dict is already fully replaced every answer_assistant() call (so a
+        pending dialogue naturally cannot outlive one turn), and _rebind_issued_actions already
+        drops an entry whose dependency fingerprint no longer matches the latest telemetry (so a
+        context change that matters to the HVAC basis already clears this for free). The explicit
+        _DIALOGUE_CONTINUITY_TTL_MS check below additionally covers the case where nothing
+        fingerprint-relevant happens to change for several minutes -- without it, a stale "ok"
+        would still resolve just because no telemetry field happened to move. Returns None
+        whenever there is anything other than exactly one pending, non-expired HVAC action, so an
+        ambiguous or non-HVAC pending state never gets guessed at.
+        """
+
+        if len(session.issued_actions) != 1:
+            return None
+        (issued,) = session.issued_actions.values()
+        if issued.action_type != "SET_HVAC_TEMPERATURE" or issued.hvac_target_temperature_c is None:
+            return None
+        if now_ms - issued.issued_at_ms > _DIALOGUE_CONTINUITY_TTL_MS:
+            return None
+        return PendingDialogue(hvac_target_temperature_c=issued.hvac_target_temperature_c)
 
     @staticmethod
     def _action_dependency_fingerprint(

@@ -14,7 +14,7 @@ from app.api.schemas.mobile import (
 )
 from app.mobile import dtc_catalog
 from app.mobile.context import ContextPack, ContextSnapshot, MobileContextBuilder
-from app.mobile.intent import IntentResolution, IntentResolver
+from app.mobile.intent import IntentResolution, IntentResolver, PendingDialogue
 from app.mobile.safety import SafetyEvaluation
 
 
@@ -86,9 +86,12 @@ class ContextAwareAssistant:
         *,
         started_at_ms: int,
         completed_at_ms: int,
+        pending_dialogue: PendingDialogue | None = None,
     ) -> AssistantPlan:
         context_pack = MobileContextBuilder.to_context_pack(snapshot)
-        resolution = self._intent_resolver.resolve(request.text, snapshot, safety)
+        resolution = self._intent_resolver.resolve(
+            request.text, snapshot, safety, pending_dialogue=pending_dialogue
+        )
         text, actions = self._message_and_actions(resolution, snapshot, safety, request.requestId)
         return AssistantPlan(
             response=AssistantQueryResponse(
@@ -144,6 +147,31 @@ class ContextAwareAssistant:
                 ),
                 ContextAwareAssistant._actions(safety, request_id),
             )
+
+        if route == "dialogue.affirmed":
+            # Short-turn continuity only (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 6): reaffirms the
+            # single most recently issued HVAC proposal against CURRENT snapshot/safety -- the
+            # target itself came from IntentResolver's PendingDialogue, sourced from the
+            # server-owned IssuedAction, never from client-supplied text. This still returns a
+            # fresh, freshly-confirmable SafeDriveAction; it does not itself execute anything --
+            # the existing confirm_action() state-version/dependency-fingerprint/executor chain
+            # is completely unchanged and still required before the vehicle state actually changes.
+            target = resolution.hvac_target_temperature_c
+            if target is None:
+                return (
+                    "Tôi chưa xác định được thao tác bạn muốn tiếp tục. Bạn có thể nói lại yêu cầu ban đầu không?",
+                    [],
+                )
+            return (
+                f"Được, tôi sẽ đặt điều hòa về {_fmt_temp(target)} độ C. Bạn xác nhận giúp tôi ở bước tiếp theo nhé.",
+                [ContextAwareAssistant._hvac_action(target, request_id)],
+            )
+
+        if route == "dialogue.declined":
+            # No action at all -- the pending proposal is simply not re-issued this turn, so it
+            # cannot be confirmed later either (session.issued_actions is fully replaced with
+            # this turn's -- empty -- action list right after this call returns).
+            return ("Được, tôi giữ nguyên.", [])
 
         if route in {"safety.driver_fatigue", "safety.user_discomfort_check"}:
             return (
@@ -316,11 +344,24 @@ class ContextAwareAssistant:
             engine_clause = (
                 f", động cơ {_fmt_temp(state.engineTemperatureC)} độ C" if engine_overheating else ""
             )
+            # Stated only when the driver actually asked about battery/energy
+            # (SAFEDRIVE_AGENT_ARMOR_PLAN.md Slice 7) -- routing an energy question here is
+            # only useful if the reply carries the figure that was asked for. Conditional
+            # rather than unconditional on purpose: this deterministic text is the narrator's
+            # approved-number set (app/mobile/llm.py, require_approved_numbers), so adding a
+            # number here obliges every LLM rewrite of this route to repeat it. Gating on the
+            # question keeps all other vehicle-status replies, and their narration behavior,
+            # exactly as before. energyPercent is a required int in VehicleState, so there is
+            # no missing-value case; a stale snapshot never reaches this branch because the
+            # state_is_fresh guard at the top of this method returns first.
+            energy_clause = (
+                f", năng lượng {state.energyPercent}%" if resolution.asked_about_energy else ""
+            )
             trend_clause = ContextAwareAssistant._engine_temperature_trend_clause(snapshot)
             return (
                 (
                     f"{headline} Tốc độ hiện tại {state.speedKmh:.0f} km/h, cabin "
-                    f"{_fmt_temp(state.cabinTemperatureC)} độ C{engine_clause}."
+                    f"{_fmt_temp(state.cabinTemperatureC)} độ C{energy_clause}{engine_clause}."
                     f"{dtc_clause}{duration_clause}{trend_clause}"
                 ),
                 ContextAwareAssistant._actions(safety, request_id),
