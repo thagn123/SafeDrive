@@ -384,6 +384,8 @@ class AssistantViewModelTest {
                 requiresConfirmation = true,
                 hvacTargetTemperatureC = 26f,
             )
+            val effects = mutableListOf<AssistantUiEffect>()
+            val job = launch(Dispatchers.Unconfined) { viewModel.effects.collect { effects.add(it) } }
 
             viewModel.onAction(AssistantUiAction.ExecuteAction(action))
             viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
@@ -396,11 +398,18 @@ class AssistantViewModelTest {
             // rejected the confirmation.
             assertThat(viewModel.state.value.messages).isEmpty()
             assertThat(dataSource.vehicleState.value.hvacTargetTemperatureC).isEqualTo(originalTarget)
-            assertThat(viewModel.state.value.confirmError).isNotNull()
+            assertThat(viewModel.state.value.confirmError).isNull()
+            assertThat(viewModel.state.value.pendingAction).isNull()
+            assertThat(effects).containsExactly(
+                AssistantUiEffect.ShowMessage(
+                    "Hành động đã bị từ chối vì trạng thái xe đã thay đổi. Vui lòng xem khuyến nghị mới nhất.",
+                ),
+            )
+            job.cancel()
         }
 
     @Test
-    fun `an accepted=false confirmation produces no success effect for a non-HVAC action`() =
+    fun `an accepted=false confirmation shows only rejection feedback for a non-HVAC action`() =
         runTest(mainDispatcherRule.dispatcher) {
             // Action-authority consistency: HVAC is the only type that mutates simulated vehicle
             // state, but acknowledging a backend *rejection* with a success effect is an authority
@@ -435,8 +444,12 @@ class AssistantViewModelTest {
             viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
             advanceUntilIdle()
 
-            assertThat(effects).isEmpty()
-            assertThat(viewModel.state.value.confirmError).isNotNull()
+            assertThat(effects).containsExactly(
+                AssistantUiEffect.ShowMessage(
+                    "Hành động đã bị từ chối vì trạng thái xe đã thay đổi. Vui lòng xem khuyến nghị mới nhất.",
+                ),
+            )
+            assertThat(viewModel.state.value.confirmError).isNull()
             assertThat(viewModel.state.value.pendingAction).isNull()
             job.cancel()
         }

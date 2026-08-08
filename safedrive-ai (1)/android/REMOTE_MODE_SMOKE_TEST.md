@@ -36,6 +36,16 @@ enter the matching URL with its trailing `/`, save it, then use **Backend
 health check**. It must report the configured host and `assistant=true`; it
 must not silently fall back to Demo Mode.
 
+For the deployed hackathon backend, use the visible **GCP Cloud** preset:
+
+```text
+https://safedrive-backend-165374511912.asia-southeast1.run.app/
+```
+
+The action-rejection evidence below is intentionally a **Remote Mode** gate.
+`MockSafeDriveGateway` accepts every positive confirmation, so Demo Mode cannot
+prove that Android obeys a real backend `accepted=false` authority decision.
+
 ## 3. Required MVP Scenarios
 
 Apply mock states through the Simulator only after Remote Mode reports healthy.
@@ -95,6 +105,36 @@ For every assistant action, confirm it in the UI when prompted.
    `realEmergencyDispatchEnabled=false`. Do not present this as a real rescue
    dispatch or a medical diagnosis.
 
+### F. Action-authority rejection (mandatory final gate)
+
+1. Stay in **Remote Mode** against the deployed backend and apply a normal,
+   fresh state with engine temperature below the warning threshold.
+2. Ask `Lạnh quá`, then `ok`, and leave the issued `SET_HVAC_TEMPERATURE`
+   action card unconfirmed in the conversation. Record its proposed target and
+   the current simulated HVAC value. Do not open the modal confirmation dialog
+   yet, because it can block navigation to Simulator.
+3. In Simulator, raise engine temperature past the backend's CRITICAL threshold
+   (use `118 C`) and wait until the Remote synchronization card confirms the
+   new state was acknowledged.
+4. Return to Assistant, open the old action card, and press Confirm.
+5. Required backend result: transport may be HTTP-success, but the response body
+   has `accepted=false` because the action's safety dependency fingerprint no
+   longer matches the current vehicle context.
+6. Required Android result: HVAC is unchanged; there is no persisted
+   `Tôi đã đặt điều hòa ở X°C.` message, no success toast, and no success effect.
+   Only the rejection UI may appear.
+
+Capture a before/after screenshot pair that includes the proposed target, HVAC
+value, CRITICAL engine state, and rejection UI. This is the device evidence for
+both the backend stale-action guard and Android's centralized `accepted == true`
+gate; a Demo Mode screenshot is not a substitute.
+
+The app already sends a state heartbeat every 4 seconds while it is running,
+below the backend's 10-second freshness window. Do not disable or background the
+app during this flow: Android may pause application work when the process is no
+longer active, and stage evidence should still show the Simulator's Remote
+synchronization acknowledgement before confirmation.
+
 ## 4. Stop Conditions
 
 Stop the run and record the result in `SAFE_DRIVE_STATUS.md` if any condition
@@ -105,6 +145,8 @@ below occurs:
 - Session start rejects `contractVersion="v1"`, a mobile error is not the
   flat contract envelope, or the app cannot read the backend state.
 - A confirmed HVAC action does not update the Cockpit state exactly once.
+- A rejected HVAC action changes local HVAC state, appends a success message,
+  or emits any success effect.
 - An unsafe HVAC request creates an action.
 - SOS behavior claims to call a real service or exposes a dispatch-enabled flag.
 
@@ -117,6 +159,7 @@ Capture one short screen recording or screenshots showing:
 3. The fatigue or DTC explanation grounded by live simulator state.
 4. The complete rescue brief and mock acknowledgement with its simulation-only
    label.
+5. The mandatory stale-action rejection before/after pair from scenario F.
 
 After the run, add the device/emulator type, selected BASE_URL, five scenario
 outcomes, any latency observation, and any deviation to

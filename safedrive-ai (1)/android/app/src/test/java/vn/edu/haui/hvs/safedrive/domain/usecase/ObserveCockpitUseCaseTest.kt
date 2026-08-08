@@ -6,11 +6,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
+import vn.edu.haui.hvs.safedrive.core.common.GatewayResult
 import vn.edu.haui.hvs.safedrive.core.common.UuidIdGenerator
 import vn.edu.haui.hvs.safedrive.core.model.CockpitSnapshot
 import vn.edu.haui.hvs.safedrive.core.model.Severity
+import vn.edu.haui.hvs.safedrive.core.model.StateUpdateRequest
 import vn.edu.haui.hvs.safedrive.core.model.SystemConnectionStatus
 import vn.edu.haui.hvs.safedrive.core.testing.FakeClock
 import vn.edu.haui.hvs.safedrive.data.mock.MockFixtures
@@ -18,6 +22,7 @@ import vn.edu.haui.hvs.safedrive.data.mock.MockPolicyEvaluator
 import vn.edu.haui.hvs.safedrive.data.mock.MockSafeDriveGateway
 import vn.edu.haui.hvs.safedrive.domain.repository.AppPreferences
 import vn.edu.haui.hvs.safedrive.domain.repository.GatewayProvider
+import vn.edu.haui.hvs.safedrive.domain.repository.SafeDriveGateway
 import vn.edu.haui.hvs.safedrive.vehicle.MockVehicleDataSource
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -90,6 +95,49 @@ class ObserveCockpitUseCaseTest {
             )
 
             assertThat(collected.map { it.stateVersion }.toSet()).isNotEqualTo(versionsBefore)
+            job.cancel()
+        }
+
+    @Test
+    fun `heartbeat refreshes backend state without a vehicle-state change`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val updates = mutableListOf<StateUpdateRequest>()
+            val recordingGateway = object : SafeDriveGateway by gateway {
+                override suspend fun updateVehicleState(
+                    request: StateUpdateRequest,
+                ): GatewayResult<vn.edu.haui.hvs.safedrive.core.model.StateEnvelope> {
+                    updates += request
+                    return gateway.updateVehicleState(request)
+                }
+            }
+            val recordingCoordinator = SessionCoordinator(
+                GatewayProvider { recordingGateway },
+                appPreferences,
+                idGenerator,
+                clock,
+                "test-1.0",
+            )
+            val heartbeatUseCase = ObserveCockpitUseCase(
+                vehicleDataSource,
+                recordingCoordinator,
+                appPreferences,
+                idGenerator,
+                clock,
+            )
+            val job = heartbeatUseCase().launchIn(this)
+
+            assertThat(updates).hasSize(1)
+            val firstUpdatedAtMs = updates.single().vehicleState.updatedAtMs
+
+            // No VehicleDataSource or preference emission occurs. Only the 4s heartbeat may
+            // cause the second push, keeping the backend comfortably inside its 10s freshness
+            // window while the driver stays on another screen between assistant turns.
+            clock.advanceBy(4_000L)
+            advanceTimeBy(4_000L)
+            runCurrent()
+
+            assertThat(updates).hasSize(2)
+            assertThat(updates.last().vehicleState.updatedAtMs).isEqualTo(firstUpdatedAtMs + 4_000L)
             job.cancel()
         }
 }

@@ -26,6 +26,8 @@ import vn.edu.haui.hvs.safedrive.domain.usecase.ConfirmActionUseCase
 import vn.edu.haui.hvs.safedrive.domain.usecase.PendingPromptCoordinator
 
 private const val SCREEN_ASSISTANT = "assistant"
+private const val ACTION_REJECTED_MESSAGE =
+    "Hành động đã bị từ chối vì trạng thái xe đã thay đổi. Vui lòng xem khuyến nghị mới nhất."
 
 /**
  * Presentation delegate over the application-scoped [ConversationRepository]/[AssistantTurnCoordinator]
@@ -138,9 +140,10 @@ class AssistantViewModel(
                     // effect -- a confirmation toast, a diagnostics screen, a "recorded" message --
                     // is an authority violation for every type, not just the one that writes state.
                     if (!result.data.accepted) {
-                        _state.update {
-                            it.copy(confirmError = "Không thể xác nhận hành động. Vui lòng thử lại.")
-                        }
+                        // Close this confirmation attempt without executing it. Surface the rejection
+                        // outside ConfirmActionDialog because pendingAction has already been cleared;
+                        // otherwise the error exists in state but is never rendered.
+                        _effects.send(AssistantUiEffect.ShowMessage(ACTION_REJECTED_MESSAGE))
                         return@launch
                     }
                     if (action.type == ActionType.SET_HVAC_TEMPERATURE) {
