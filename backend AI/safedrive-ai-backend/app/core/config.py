@@ -108,6 +108,16 @@ class Settings(BaseSettings):
         default=None,
         description="Future cloud LLM API key boundary",
     )
+    memory_backend: Literal["in_memory", "firestore"] = Field(
+        default="in_memory",
+        description="Bounded episodic context-memory provider",
+    )
+    firestore_database_id: str = Field(
+        default="ai-studio-73271eac-0871-4a76-ba4c-c385c60e0ac6",
+        min_length=1,
+        max_length=128,
+        description="Firestore Native database used for durable context memory",
+    )
     rolling_window_prune_interval_seconds: float = Field(
         default=60.0,
         ge=1.0,

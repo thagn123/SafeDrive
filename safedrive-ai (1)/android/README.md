@@ -142,7 +142,10 @@ Compose UI (CockpitScreen)
   (ported `evaluateRisk`/`evaluateRestRecommendation`; `NO_IMMEDIATE_INDICATION` → `NORMAL` per
   `09-checklists-and-decisions.md`), `MockSafeDriveGateway`.
 - `data/local` — `DataStorePreferencesRepository` (settings persistence, no secrets).
-- `vehicle` — `MockVehicleDataSource` (adapter boundary; a VHAL adapter is a later phase).
+- `vehicle` — `MockVehicleDataSource` for deterministic demos; `AndroidAutomotiveVehicleActionExecutor`
+  writes and verifies HVAC/door properties through Car Service, while `AndroidCrashEvidenceAdapter`
+  consumes VHAL impact/airbag/speed plus device IMU evidence. Real execution requires OEM-granted
+  privileged car permissions on the connected AAOS/CarSky target.
 - `voice` — `VoiceController` interface + `VoiceUiState` contract only (implementation is Phase 5).
 - `feature/cockpit` — the one real vertical-slice screen this phase ships.
 - `feature/assistant|diagnostics|settings` — placeholder screens replaced in Phase 3.

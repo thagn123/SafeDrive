@@ -53,6 +53,7 @@ fun SafeDriveNavHost(navController: NavHostController, container: SafeDriveConta
                             cockpitSnapshot = container.cockpitSnapshot,
                             pendingPromptCoordinator = container.pendingPromptCoordinator,
                             vehicleDataSource = container.vehicleDataSource,
+                            vehicleActionExecutor = container.vehicleActionExecutor,
                             clock = container.clock,
                         )
                     }

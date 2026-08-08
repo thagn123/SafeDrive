@@ -158,6 +158,19 @@ class IntentResolver:
                 return self._single("dialogue.declined", 0.97)
         if self._contains(normalized, "sos", "cuu ho", "cap cuu", "emergency", "help"):
             return self._single("safety.emergency_request", 0.98)
+        if self._contains(normalized, "mo khoa cua", "unlock door", "unlock the door"):
+            return self._single("vehicle.unlock_doors", 0.97)
+        if self._contains(normalized, "khoa cua", "lock door", "lock the door"):
+            return self._single("vehicle.lock_doors", 0.97)
+        if self._contains(
+            normalized,
+            "mo nhac",
+            "bat nhac",
+            "phat nhac",
+            "play music",
+            "play media",
+        ):
+            return self._single("media.play", 0.96)
         # Matched against the *raw* text (case-insensitive), not the accent-stripped/
         # case-folded `normalized` string, so the canonical uppercase code can be
         # recovered for display and lookup.
@@ -258,6 +271,15 @@ class IntentResolver:
                 hypotheses=(IntentHypothesis("assistant.vehicle_status", 0.9),),
                 asked_about_energy=True,
             )
+        if self._contains(
+            normalized,
+            "ban nho gi",
+            "nho lan truoc",
+            "nho tinh huong",
+            "bo nho",
+            "what do you remember",
+        ):
+            return self._single("assistant.memory_recall", 0.94)
         if self._contains(
             normalized,
             "khong on",

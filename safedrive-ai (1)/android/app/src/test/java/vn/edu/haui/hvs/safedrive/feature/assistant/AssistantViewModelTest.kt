@@ -29,6 +29,10 @@ import vn.edu.haui.hvs.safedrive.domain.repository.ConversationRepository
 import vn.edu.haui.hvs.safedrive.domain.repository.GatewayProvider
 import vn.edu.haui.hvs.safedrive.domain.repository.SafeDriveGateway
 import vn.edu.haui.hvs.safedrive.domain.repository.VehicleDataSource
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionCommand
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionExecution
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionExecutor
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionMode
 import vn.edu.haui.hvs.safedrive.domain.usecase.AssistantQueryUseCase
 import vn.edu.haui.hvs.safedrive.domain.usecase.AssistantTurnCoordinator
 import vn.edu.haui.hvs.safedrive.domain.usecase.ConfirmActionUseCase
@@ -64,6 +68,7 @@ class AssistantViewModelTest {
         provider: GatewayProvider = gatewayProvider,
         cockpitSnapshotFlow: StateFlow<CockpitSnapshot?> = cockpitSnapshot,
         vehicleDataSource: VehicleDataSource? = null,
+        vehicleActionExecutor: VehicleActionExecutor? = null,
     ): AssistantViewModel {
         // Built fresh per call from `provider` (not a shared class-level instance) so a per-test
         // gateway override (e.g. `slowGateway()`/a failing gateway) is actually the gateway the turn's
@@ -91,6 +96,7 @@ class AssistantViewModelTest {
             cockpitSnapshot = cockpitSnapshotFlow,
             pendingPromptCoordinator = pendingPromptCoordinator,
             vehicleDataSource = vehicleDataSource,
+            vehicleActionExecutor = vehicleActionExecutor,
             clock = clock,
         )
     }
@@ -526,6 +532,74 @@ class AssistantViewModelTest {
         val viewModel = buildViewModel(this, pendingPromptCoordinator = coordinator)
         assertThat(viewModel.state.value.composerText).isEqualTo("Hãy giải thích mã lỗi P0301")
     }
+    @Test
+    fun `accepted vehicle action reaches executor only after authority confirmation`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val executed = mutableListOf<VehicleActionCommand>()
+            val executor = VehicleActionExecutor { command ->
+                executed += command
+                VehicleActionExecution(
+                    applied = true,
+                    readBackVerified = true,
+                    mode = VehicleActionMode.VEHICLE,
+                    message = "vehicle verified",
+                )
+            }
+            val viewModel = buildViewModel(this, vehicleActionExecutor = executor)
+            val action = SafeDriveAction(
+                id = "act_lock_doors",
+                type = ActionType.LOCK_DOORS,
+                title = "Khóa cửa",
+                requiresConfirmation = true,
+            )
+
+            viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+            advanceUntilIdle()
+            assertThat(executed).isEmpty()
+
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+            assertThat(executed).containsExactly(VehicleActionCommand.LockDoors)
+        }
+
+    @Test
+    fun `rejected authority confirmation never reaches vehicle executor`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val rejectingGateway = object : SafeDriveGateway by gateway {
+                override suspend fun confirmAction(
+                    request: vn.edu.haui.hvs.safedrive.core.model.ActionConfirmRequest,
+                ) = vn.edu.haui.hvs.safedrive.core.common.GatewayResult.Success(
+                    vn.edu.haui.hvs.safedrive.core.model.ActionConfirmResult(
+                        accepted = false,
+                        actionResult = null,
+                        message = "rejected by action authority",
+                        serverTimeMs = clock.nowMs(),
+                    ),
+                )
+            }
+            var executorCalls = 0
+            val executor = VehicleActionExecutor {
+                executorCalls += 1
+                VehicleActionExecution(true, true, VehicleActionMode.VEHICLE, "unexpected")
+            }
+            val viewModel = buildViewModel(
+                this,
+                provider = fakeGatewayProvider { rejectingGateway },
+                vehicleActionExecutor = executor,
+            )
+            val action = SafeDriveAction(
+                id = "act_unlock_doors",
+                type = ActionType.UNLOCK_DOORS,
+                title = "Mở khóa cửa",
+                requiresConfirmation = true,
+            )
+
+            viewModel.onAction(AssistantUiAction.ExecuteAction(action))
+            viewModel.onAction(AssistantUiAction.ConfirmPendingAction)
+            advanceUntilIdle()
+
+            assertThat(executorCalls).isEqualTo(0)
+        }
 }
 
 private fun fakeGatewayProvider(provider: () -> SafeDriveGateway) = object : GatewayProvider {

@@ -173,6 +173,40 @@ class ContextAwareAssistant:
             # this turn's -- empty -- action list right after this call returns).
             return ("Được, tôi giữ nguyên.", [])
 
+        if route in {"vehicle.lock_doors", "vehicle.unlock_doors"}:
+            if safety.risk.level in {"HIGH", "CRITICAL"} or safety.emergency_candidate:
+                return (
+                    "Tôi chưa thể thay đổi khóa cửa khi xe đang có cảnh báo an toàn mức cao.",
+                    [],
+                )
+            if state.speedKmh > 0:
+                return (
+                    "Vì xe đang di chuyển, tôi chưa thể thay đổi khóa cửa. Hãy dừng xe an toàn trước.",
+                    [],
+                )
+            action_type = "LOCK_DOORS" if route == "vehicle.lock_doors" else "UNLOCK_DOORS"
+            verb = "khóa" if action_type == "LOCK_DOORS" else "mở khóa"
+            return (
+                f"Xe đang dừng. Tôi có thể {verb} tất cả cửa sau khi bạn xác nhận.",
+                [ContextAwareAssistant._vehicle_action(action_type, request_id)],
+            )
+
+        if route == "media.play":
+            if safety.risk.level in {"HIGH", "CRITICAL"} or safety.emergency_candidate:
+                return (
+                    "Tôi tạm không mở nhạc vì cảnh báo an toàn hiện tại cần được ưu tiên.",
+                    [],
+                )
+            return (
+                "Tôi có thể mở nhạc bằng trình phát media của xe sau khi bạn xác nhận.",
+                [ContextAwareAssistant._vehicle_action("PLAY_MEDIA", request_id)],
+            )
+
+        if route == "assistant.memory_recall":
+            # MobileSessionStore replaces this placeholder with bounded, provenance-tagged,
+            # non-expired facts from ContextMemory. Memory never creates an action.
+            return ("Tôi đang kiểm tra bộ nhớ tình huống gần đây.", [])
+
         if route in {"safety.driver_fatigue", "safety.user_discomfort_check"}:
             return (
                 ContextAwareAssistant._fatigue_situation(state, safety)
@@ -569,7 +603,21 @@ class ContextAwareAssistant:
         return SafeDriveAction(
             id=f"act_set_hvac_{_fmt_temp(target)}_{request_id}",
             type="SET_HVAC_TEMPERATURE",
-            title=f"Đặt điều hòa {_fmt_temp(target)}°C (mô phỏng)",
+            title=f"Đặt điều hòa {_fmt_temp(target)}°C",
             requiresConfirmation=True,
             hvacTargetTemperatureC=target,
+        )
+
+    @staticmethod
+    def _vehicle_action(action_type: str, request_id: str) -> SafeDriveAction:
+        titles = {
+            "LOCK_DOORS": "Khóa tất cả cửa",
+            "UNLOCK_DOORS": "Mở khóa tất cả cửa",
+            "PLAY_MEDIA": "Mở nhạc",
+        }
+        return SafeDriveAction(
+            id=f"act_{action_type.lower()}_{request_id}",
+            type=action_type,
+            title=titles[action_type],
+            requiresConfirmation=True,
         )

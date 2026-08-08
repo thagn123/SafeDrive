@@ -561,7 +561,7 @@ components:
         id: { type: string }
         type:
           type: string
-          enum: [SHOW_WARNING, OPEN_DIAGNOSTICS, SUGGEST_REST_STOP, START_SOS_COUNTDOWN, SET_HVAC_TEMPERATURE, NONE]
+          enum: [SHOW_WARNING, OPEN_DIAGNOSTICS, SUGGEST_REST_STOP, START_SOS_COUNTDOWN, SET_HVAC_TEMPERATURE, LOCK_DOORS, UNLOCK_DOORS, PLAY_MEDIA, NONE]
         title: { type: string }
         requiresConfirmation:
           type: boolean
@@ -670,7 +670,7 @@ components:
         actionId: { type: string }
         actionType:
           type: string
-          enum: [SHOW_WARNING, OPEN_DIAGNOSTICS, SUGGEST_REST_STOP, START_SOS_COUNTDOWN, SET_HVAC_TEMPERATURE, NONE]
+          enum: [SHOW_WARNING, OPEN_DIAGNOSTICS, SUGGEST_REST_STOP, START_SOS_COUNTDOWN, SET_HVAC_TEMPERATURE, LOCK_DOORS, UNLOCK_DOORS, PLAY_MEDIA, NONE]
         confirmed: { type: boolean }
         confirmationId: { type: string }
         contextVersion: { type: integer, format: int64 }

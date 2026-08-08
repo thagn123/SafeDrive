@@ -18,6 +18,7 @@ from app.ingestion.canonicalizer import Canonicalizer
 from app.ingestion.registry import SignalRegistry
 from app.mobile.emergency_reasoner import EmergencyLLMReasoner
 from app.mobile.llm import GeminiNarrator, OllamaIntentClassifier, OllamaNarrator, VertexAINarrator
+from app.mobile.memory import FirestoreContextMemory, InMemoryContextMemory
 from app.mobile.session_store import MobileSessionStore
 from app.mobile.state_bridge import MobileStateBridge
 from app.services.signal_ingestion import SignalIngestionService
@@ -143,11 +144,20 @@ def _publish_services(app: FastAPI, services: core_services.ApplicationServices)
             project_id=services.settings.gcp_project_id or "gen-lang-client-0307536353",
             region=services.settings.gcp_region,
         )
+    memory = (
+        FirestoreContextMemory(
+            project_id=services.settings.gcp_project_id or "gen-lang-client-0307536353",
+            database_id=services.settings.firestore_database_id,
+        )
+        if services.settings.memory_backend == "firestore"
+        else InMemoryContextMemory()
+    )
     app.state.mobile_session_store = MobileSessionStore(
         state_bridge=MobileStateBridge(services),
         narrator=narrator,
         classifier=classifier,
         reasoner=reasoner,
+        memory=memory,
     )
     app.state.startup_error = None
     app.state.ready = True

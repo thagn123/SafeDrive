@@ -210,10 +210,11 @@ with real timestamps.
   criterion.
 - **APK is unsigned** — no release signing key/keystore was provided; accepted per
   `07-testing-security-acceptance.md` ("Release APK unsigned hoặc internal-signed nếu có").
-- **No Gemini Live, Firebase, Google Maps, VHAL, camera/DMS, wearable production, or real emergency
-  dispatch** anywhere in the app — out of scope by `00-executive-plan.md` and the stabilization plan's
-  own "không mở rộng" list, never added at any point across either the original 8-phase build or this
-  stabilization pass.
+- **No Gemini Live, Google Maps, camera/DMS, wearable production, or real emergency dispatch.**
+  Android Automotive integration is now present for VHAL-backed HVAC, door locks, speed, impact and
+  airbag evidence, plus durable Firestore context memory. Those adapters still require an AAOS/CarSky
+  image that exposes the properties and grants its privileged car permissions; a phone build cannot
+  be used as proof of physical vehicle execution.
 
 ## Voice
 
@@ -227,9 +228,10 @@ with real timestamps.
 
 ## Emergency
 
-- The evidence rule (crash + at least one supporting signal) is only wired to the Simulator's crash
-  preset and manual crash toggle — no real crash-sensor integration (out of scope; VHAL/real sensors
-  are a documented future phase).
+- The emergency evidence rule accepts authoritative VHAL impact/airbag properties, or a fused
+  device-IMU high-g event plus a VHAL speed drop inside two seconds. A single phone shake cannot
+  declare a crash. The Simulator preset remains available for a deterministic demo. Physical sensor
+  validation is DEVICE_PENDING until the CarSky/AAOS target is connected.
 
 ## Contract / backend
 

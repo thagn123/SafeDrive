@@ -54,6 +54,9 @@ import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
 import vn.edu.haui.hvs.safedrive.domain.usecase.VoiceAssistantCoordinator
 import vn.edu.haui.hvs.safedrive.feature.emergency.EmergencyReducer
 import vn.edu.haui.hvs.safedrive.vehicle.MockVehicleDataSource
+import vn.edu.haui.hvs.safedrive.vehicle.ModeAwareVehicleActionExecutor
+import vn.edu.haui.hvs.safedrive.vehicle.VehicleActionExecutorFactory
+import vn.edu.haui.hvs.safedrive.vehicle.CrashEvidenceAdapterFactory
 import vn.edu.haui.hvs.safedrive.voice.AndroidSpeechRecognizerController
 import vn.edu.haui.hvs.safedrive.voice.AndroidTextToSpeechController
 import vn.edu.haui.hvs.safedrive.voice.VoiceController
@@ -62,6 +65,7 @@ private val Context.settingsDataStore by preferencesDataStore(name = "safedrive_
 private val Context.emergencyDataStore by preferencesDataStore(name = "safedrive_emergency")
 
 private const val EMERGENCY_TICK_MS = 200L
+private const val REAL_CRASH_RESPONSE_GRACE_MS = 5_000L
 
 /** Minimum gap between two Safety Guardian TTS announcements that are not a genuine severity escalation
  * — see the guardian block in [SafeDriveContainer.init] for why this exists: a live device was observed
@@ -103,6 +107,12 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
 
     val appPreferences: StateFlow<AppPreferences> = preferencesRepository.preferences
         .stateIn(applicationScope, SharingStarted.Eagerly, AppPreferences())
+
+    val vehicleActionExecutor = ModeAwareVehicleActionExecutor(
+        preferences = appPreferences,
+        realExecutor = VehicleActionExecutorFactory.create(context.applicationContext),
+    )
+    val crashEvidenceAdapter = CrashEvidenceAdapterFactory.create(context.applicationContext, clock)
 
     @Volatile
     private var cachedRemote: Pair<String, SafeDriveGateway>? = null
@@ -277,6 +287,34 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
 
     init {
         voiceAssistantCoordinator.start()
+        crashEvidenceAdapter.start()
+
+        applicationScope.launch {
+            crashEvidenceAdapter.decisions.collect { decision ->
+                if (!decision.crashDetected) return@collect
+                val currentState = vehicleDataSource.vehicleState.value
+                val currentSignals = vehicleDataSource.driverSupportSignals.value
+                vehicleDataSource.updateManual(
+                    vehicleState = currentState.copy(
+                        crashDetected = true,
+                        passengerResponse = PassengerResponse.UNKNOWN,
+                        updatedAtMs = decision.decidedAtMs,
+                    ),
+                    driverSupportSignals = currentSignals,
+                )
+                delay(REAL_CRASH_RESPONSE_GRACE_MS)
+                val afterGrace = vehicleDataSource.vehicleState.value
+                if (afterGrace.crashDetected && afterGrace.passengerResponse == PassengerResponse.UNKNOWN) {
+                    vehicleDataSource.updateManual(
+                        vehicleState = afterGrace.copy(
+                            passengerResponse = PassengerResponse.NO_RESPONSE,
+                            updatedAtMs = clock.nowMs(),
+                        ),
+                        driverSupportSignals = vehicleDataSource.driverSupportSignals.value,
+                    )
+                }
+            }
+        }
 
         // A session belongs to exactly one (mode, baseUrl) pair; switching either invalidates the
         // cached session id and cancels any in-flight assistant turn, so nothing keeps running

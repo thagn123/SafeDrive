@@ -9,6 +9,7 @@ plugins {
 android {
     namespace = "vn.edu.haui.hvs.safedrive"
     compileSdk = 37
+    useLibrary("android.car")
 
     defaultConfig {
         applicationId = "vn.edu.haui.hvs.safedrive"

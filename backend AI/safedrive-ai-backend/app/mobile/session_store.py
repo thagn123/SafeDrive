@@ -28,11 +28,12 @@ from app.api.schemas.mobile import (
     VehicleState,
 )
 from app.mobile.assistant import AssistantPlan, ContextAwareAssistant
-from app.mobile.context import ContextPack, ContextSnapshot, MobileContextBuilder
+from app.mobile.context import ContextPack, ContextSnapshot, ContextValue, MobileContextBuilder
 from app.mobile.emergency import RescueBriefBuilder, SimulatedRescueGateway
 from app.mobile.emergency_reasoner import EmergencyLLMReasoner
 from app.mobile.intent import DTC_CODE_PATTERN, IntentResolution, PendingDialogue
 from app.mobile.llm import NarrationProvider, OllamaIntentClassifier
+from app.mobile.memory import ContextMemory, InMemoryContextMemory, MemoryFact, memory_fact
 from app.mobile.safety import SafetyEvaluation, SafetyRiskEngine
 from app.mobile.state_bridge import MobileStateBridge
 
@@ -100,6 +101,7 @@ def now_ms() -> int:
 @dataclass(slots=True)
 class MobileSession:
     session_id: str
+    device_id: str
     expires_at_ms: int
     state: StateEnvelope | None
     emergency: EmergencySnapshot
@@ -145,6 +147,7 @@ class MobileSessionStore:
         reasoner: EmergencyLLMReasoner | None = None,
         rescue_brief_builder: RescueBriefBuilder | None = None,
         rescue_gateway: SimulatedRescueGateway | None = None,
+        memory: ContextMemory | None = None,
         clock: Callable[[], int] | None = None,
     ) -> None:
         self._sessions: dict[str, MobileSession] = {}
@@ -165,17 +168,18 @@ class MobileSessionStore:
         self._reasoner = reasoner
         self._rescue_brief_builder = rescue_brief_builder or RescueBriefBuilder()
         self._rescue_gateway = rescue_gateway or SimulatedRescueGateway()
+        self._memory = memory or InMemoryContextMemory()
         self._clock = clock or now_ms
 
     def _now_ms(self) -> int:
         return self._clock()
 
     async def start(self, request: StartSessionRequest) -> StartSessionResponse:
-        del request  # The MVP tracks no device identity beyond the issued session ID.
         created_at = self._now_ms()
         session_id = f"session_{uuid.uuid4().hex}"
         session = MobileSession(
             session_id=session_id,
+            device_id=request.deviceId,
             expires_at_ms=created_at + SESSION_TTL_MS,
             state=None,
             emergency=EmergencySnapshot(
@@ -219,6 +223,10 @@ class MobileSessionStore:
         accepted_at = self._now_ms()
         async with self._lock:
             session = self._require_session(request.sessionId)
+            previous_risk_level = (
+                session.state.riskAssessment.level if session.state is not None else None
+            )
+            device_id = session.device_id
             next_version = 1 if session.state is None else session.state.stateVersion + 1
             snapshot = self._context_builder.build(
                 request,
@@ -263,12 +271,43 @@ class MobileSessionStore:
             [item.code for item in evaluation.evidence],
             new_candidate_deadline,
         )
+        if evaluation.risk.level != previous_risk_level and evaluation.risk.level != "LOW":
+            await self._remember_safely(
+                device_id,
+                memory_fact(
+                    kind="safety_situation",
+                    summary=(
+                        f"{evaluation.risk.level}: {evaluation.risk.title}; "
+                        f"reasons={','.join(evaluation.risk.reasonCodes) or 'none'}"
+                    ),
+                    source=f"vehicle_context_v{envelope.stateVersion}",
+                    now_ms=accepted_at,
+                    ttl_ms=7 * 24 * 60 * 60 * 1_000,
+                ),
+            )
+        await self._remember_safely(
+            device_id,
+            memory_fact(
+                kind="vehicle_context",
+                summary=(
+                    f"risk={evaluation.risk.level}; speed={request.state.speedKmh:g} km/h; "
+                    f"engine={request.state.engineTemperatureC:g} C; "
+                    f"cabin={request.state.cabinTemperatureC:g} C; "
+                    f"energy={request.state.energyPercent:g}%"
+                ),
+                source=f"{request.source}:state_v{envelope.stateVersion}",
+                now_ms=accepted_at,
+                ttl_ms=24 * 60 * 60 * 1_000,
+            ),
+        )
         return envelope
 
     async def accept_event(self, request: EventRequest) -> EventAccepted:
         accepted_at = self._now_ms()
+        device_id = ""
         async with self._lock:
             session = self._require_session(request.sessionId)
+            device_id = session.device_id
             if request.type == "USER_REPORTED_FATIGUE" and session.state is not None:
                 signals = session.state.driverSupportSignals.model_copy(
                     update={"userReportedFatigue": True}
@@ -318,12 +357,26 @@ class MobileSessionStore:
             self._maybe_schedule_candidate_reasoning(
                 request.sessionId, session.state.state, evidence_codes, new_candidate_deadline
             )
+        event_details = request.scenarioId or request.connectionStatus or request.reason or "accepted"
+        await self._remember_safely(
+            device_id,
+            memory_fact(
+                kind="vehicle_event",
+                summary=f"{request.type}: {event_details[:160]}",
+                source="mobile_event",
+                now_ms=accepted_at,
+                ttl_ms=7 * 24 * 60 * 60 * 1_000,
+            ),
+        )
         return result
 
     async def confirm_action(self, request: ActionConfirmRequest) -> ActionConfirmResponse:
         bridge_request: StateUpdateRequest | None = None
+        remembered_fact: MemoryFact | None = None
+        device_id = ""
         async with self._lock:
             session = self._require_session(request.sessionId)
+            device_id = session.device_id
             latest_version = session.state.stateVersion if session.state is not None else 0
             if request.contextVersion != latest_version:
                 return ActionConfirmResponse(
@@ -367,12 +420,35 @@ class MobileSessionStore:
                     ),
                     serverTimeMs=self._now_ms(),
                 )
+                remembered_fact = memory_fact(
+                    kind="driver_preference",
+                    summary=f"Driver confirmed HVAC target {request.hvacTargetTemperatureC:g} C",
+                    source="confirmed_vehicle_action",
+                    now_ms=self._now_ms(),
+                    ttl_ms=30 * 24 * 60 * 60 * 1_000,
+                )
             else:
+                vehicle_tool = request.actionType in {"LOCK_DOORS", "UNLOCK_DOORS", "PLAY_MEDIA"}
                 result = ActionConfirmResponse(
                     accepted=True,
-                    actionResult=f"SIMULATED_{request.actionType}",
-                    message="Action confirmation was accepted in simulation mode.",
+                    actionResult=(
+                        f"AUTHORIZED_{request.actionType}"
+                        if vehicle_tool
+                        else f"SIMULATED_{request.actionType}"
+                    ),
+                    message=(
+                        "Action was authorized for execution by the vehicle adapter."
+                        if vehicle_tool
+                        else "Action confirmation was accepted in simulation mode."
+                    ),
                     serverTimeMs=self._now_ms(),
+                )
+                remembered_fact = memory_fact(
+                    kind="confirmed_action",
+                    summary=f"Driver confirmed {request.actionType}",
+                    source="confirmed_vehicle_action",
+                    now_ms=self._now_ms(),
+                    ttl_ms=7 * 24 * 60 * 60 * 1_000,
                 )
 
         if bridge_request is not None and self._state_bridge is not None:
@@ -381,6 +457,8 @@ class MobileSessionStore:
                 session_id=request.sessionId,
                 state_version=latest_version + 1,
             )
+        if remembered_fact is not None:
+            await self._remember_safely(device_id, remembered_fact)
         return result
 
     def _apply_hvac_action(
@@ -535,6 +613,19 @@ class MobileSessionStore:
             }
             response = plan.response
             state_version = session.state.stateVersion
+            device_id = session.device_id
+
+        memory_facts = await self._recent_memory_safely(device_id, now_ms=started_at)
+        plan = self._attach_memory(plan, memory_facts, now_ms=started_at)
+        if plan.resolution.route == "assistant.memory_recall":
+            if memory_facts:
+                recalled = " Tôi cũng nhớ: ".join(fact.summary for fact in memory_facts[:3])
+                text = f"Tôi nhớ các tình huống gần đây có nguồn xác định: {recalled}."
+            else:
+                text = "Tôi chưa có tình huống hoặc lựa chọn nào còn hiệu lực trong bộ nhớ."
+            response = response.model_copy(
+                update={"message": response.message.model_copy(update={"text": text})}
+            )
 
         # Advisory reclassification for text the deterministic router could not match
         # confidently at all (see _can_classify). Runs outside the session lock for the
@@ -552,7 +643,9 @@ class MobileSessionStore:
         # inference cannot block telemetry. High-risk and emergency wording stays
         # deterministic and is never delayed or softened by model generation.
         if self._narrator is None or not self._can_narrate(plan.resolution.route, safety):
-            return response
+            return await self._remember_response(
+                device_id, response, route=plan.resolution.route, now_ms=self._now_ms()
+            )
         if plan.resolution.route == "assistant.general":
             unverified_token = self._find_unverified_code_token(request.text, plan.context_pack)
             if unverified_token is not None:
@@ -565,8 +658,11 @@ class MobileSessionStore:
                     "giải thích chính xác. Hãy kiểm tra lại mã hoặc cung cấp thông tin từ hệ thống "
                     "chẩn đoán xe."
                 )
-                return response.model_copy(
+                safe_response = response.model_copy(
                     update={"message": response.message.model_copy(update={"text": safe_text})}
+                )
+                return await self._remember_response(
+                    device_id, safe_response, route=plan.resolution.route, now_ms=self._now_ms()
                 )
             # The true catch-all -- nothing matched a known category -- gets a genuine
             # free-form answer-or-redirect instead of a rewrite of an already-fixed reply.
@@ -603,11 +699,14 @@ class MobileSessionStore:
             # was rejected by rewrite_grounded_reply's own grounding/language checks --
             # either way the caller already has the safe deterministic `response` and
             # must not see a raw error.
-            return response.model_copy(
+            fallback_response = response.model_copy(
                 update={"fallback": True, "fallbackReason": "provider_unavailable"}
             )
+            return await self._remember_response(
+                device_id, fallback_response, route=plan.resolution.route, now_ms=self._now_ms()
+            )
         completed_at = self._now_ms()
-        return response.model_copy(
+        final_response = response.model_copy(
             update={
                 "message": response.message.model_copy(
                     update={"text": narrated, "latencyMs": completed_at - started_at}
@@ -618,6 +717,69 @@ class MobileSessionStore:
                 "llmUsed": True,
             }
         )
+        return await self._remember_response(
+            device_id, final_response, route=plan.resolution.route, now_ms=completed_at
+        )
+
+    async def _remember_response(
+        self,
+        device_id: str,
+        response: AssistantQueryResponse,
+        *,
+        route: str,
+        now_ms: int,
+    ) -> AssistantQueryResponse:
+        await self._remember_safely(
+            device_id,
+            memory_fact(
+                kind="assistant_response",
+                summary=f"route={route}; response={response.message.text[:320]}",
+                source="agent_armor",
+                now_ms=now_ms,
+                ttl_ms=24 * 60 * 60 * 1_000,
+            ),
+        )
+        return response
+
+    async def _remember_safely(self, device_id: str, fact: MemoryFact) -> None:
+        try:
+            await self._memory.append(device_id, fact)
+        except Exception:  # noqa: BLE001 -- memory must never break the safety path
+            return
+
+    async def _recent_memory_safely(
+        self, device_id: str, *, now_ms: int
+    ) -> tuple[MemoryFact, ...]:
+        try:
+            return await self._memory.recent(device_id, now_ms=now_ms, limit=8)
+        except Exception:  # noqa: BLE001 -- deterministic context remains authoritative
+            return ()
+
+    @staticmethod
+    def _attach_memory(
+        plan: AssistantPlan, facts: tuple[MemoryFact, ...], *, now_ms: int
+    ) -> AssistantPlan:
+        if not facts:
+            return plan
+        memory_values = tuple(
+            ContextValue(
+                name=f"memory.recent.{index}.{fact.kind}",
+                value=fact.summary,
+                source=fact.source,
+                age_ms=max(0, now_ms - fact.created_at_ms),
+                status="FRESH",
+            )
+            for index, fact in enumerate(facts)
+        )
+        context_pack = replace(
+            plan.context_pack,
+            values=(*plan.context_pack.values, *memory_values),
+            constraints=(
+                *plan.context_pack.constraints,
+                "Memory summaries are advisory, provenance-tagged, TTL-bounded, and never authorize actions.",
+            ),
+        )
+        return replace(plan, context_pack=context_pack)
 
     @staticmethod
     def _find_unverified_code_token(text: str, context_pack: ContextPack) -> str | None:
@@ -826,12 +988,12 @@ class MobileSessionStore:
         selected HVAC target or its safety policy in this MVP.
         """
 
-        if action_type != "SET_HVAC_TEMPERATURE" or request is None:
+        if request is None:
             return None
         state = request.state
         signals = request.driverSupportSignals
         dtc_severity = tuple((dtc.code, dtc.severity) for dtc in state.activeDtcs)
-        return (
+        safety_basis = (
             state.cabinTemperatureC,
             state.energyPercent,
             state.hvacTargetTemperatureC,
@@ -842,6 +1004,13 @@ class MobileSessionStore:
             dtc_severity,
             MobileSessionStore._engine_temperature_safety_band(state.engineTemperatureC),
         )
+        if action_type == "SET_HVAC_TEMPERATURE":
+            return (action_type, *safety_basis)
+        if action_type in {"LOCK_DOORS", "UNLOCK_DOORS"}:
+            return (action_type, state.speedKmh == 0, *safety_basis)
+        if action_type == "PLAY_MEDIA":
+            return (action_type, *safety_basis)
+        return None
 
     @staticmethod
     def _engine_temperature_safety_band(engine_temperature_c: float) -> str:

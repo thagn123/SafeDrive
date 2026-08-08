@@ -18,6 +18,9 @@ enum class ActionType {
     SUGGEST_REST_STOP,
     START_SOS_COUNTDOWN,
     SET_HVAC_TEMPERATURE,
+    LOCK_DOORS,
+    UNLOCK_DOORS,
+    PLAY_MEDIA,
     NONE,
 }
 

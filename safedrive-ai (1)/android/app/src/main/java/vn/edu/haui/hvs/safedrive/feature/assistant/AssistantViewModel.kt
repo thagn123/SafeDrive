@@ -21,6 +21,10 @@ import vn.edu.haui.hvs.safedrive.core.model.SafeDriveAction
 import vn.edu.haui.hvs.safedrive.domain.repository.ConversationRepository
 import vn.edu.haui.hvs.safedrive.domain.repository.PreferencesRepository
 import vn.edu.haui.hvs.safedrive.domain.repository.VehicleDataSource
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionCommand
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionExecution
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionExecutor
+import vn.edu.haui.hvs.safedrive.domain.repository.VehicleActionMode
 import vn.edu.haui.hvs.safedrive.domain.usecase.AssistantTurnCoordinator
 import vn.edu.haui.hvs.safedrive.domain.usecase.ConfirmActionUseCase
 import vn.edu.haui.hvs.safedrive.domain.usecase.PendingPromptCoordinator
@@ -44,6 +48,7 @@ class AssistantViewModel(
     private val cockpitSnapshot: StateFlow<CockpitSnapshot?>,
     private val pendingPromptCoordinator: PendingPromptCoordinator,
     private val vehicleDataSource: VehicleDataSource? = null,
+    private val vehicleActionExecutor: VehicleActionExecutor? = null,
     private val clock: AppClock? = null,
 ) : ViewModel() {
 
@@ -146,9 +151,6 @@ class AssistantViewModel(
                         _effects.send(AssistantUiEffect.ShowMessage(ACTION_REJECTED_MESSAGE))
                         return@launch
                     }
-                    if (action.type == ActionType.SET_HVAC_TEMPERATURE) {
-                        appendHvacConfirmationMessage(action)
-                    }
                     performEffect(action)
                 }
 
@@ -161,23 +163,20 @@ class AssistantViewModel(
         }
     }
 
-    /** Persists the verified HVAC confirmation as a real conversation turn (SAFEDRIVE_AGENT_ARMOR_PLAN.md
-     * Slice 5A) via [ConversationRepository.appendSystemNotice] -- the same safe, no-turn-implications
-     * append already used for backend-confirmed facts that were never a user-turn reply (see
-     * [vn.edu.haui.hvs.safedrive.SafeDriveContainer]'s proactive Safety Guardian notice). Called only
-     * from the `result.data.accepted == true` branch above -- [action.hvacTargetTemperatureC] is trusted
-     * here specifically because the backend's confirm_action() only accepts a confirmation whose target
-     * exactly matches what it issued (a mismatched target is rejected before execution), so this is the
-     * backend-verified value, not the optimistic proposal. */
-    private fun appendHvacConfirmationMessage(action: SafeDriveAction) {
-        val target = action.hvacTargetTemperatureC ?: return
+    private fun appendVehicleActionMessage(action: SafeDriveAction, message: String) {
+        val text = if (action.type == ActionType.SET_HVAC_TEMPERATURE) {
+            val target = action.hvacTargetTemperatureC ?: return
+            "Tôi đã đặt điều hòa ở ${target.toInt()}°C."
+        } else {
+            message
+        }
         conversationRepository.appendSystemNotice(
             ChatMessage(
                 id = "${action.id}_confirmed",
                 sender = ChatSender.SAFEDRIVE,
-                text = "Tôi đã đặt điều hòa ở ${target.toInt()}°C.",
+                text = text,
                 timestampMs = clock?.nowMs() ?: System.currentTimeMillis(),
-                route = "action.confirm.hvac",
+                route = "action.confirm.${action.type.name.lowercase()}",
             ),
         )
     }
@@ -200,19 +199,65 @@ class AssistantViewModel(
                             "Đã ghi nhận yêu cầu hỗ trợ khẩn cấp. Để xem luồng SOS mô phỏng đầy đủ, dùng kịch bản va chạm trong Simulator.",
                         ),
                     )
-                ActionType.SET_HVAC_TEMPERATURE -> applySimulatedHvacTarget(action)
+                ActionType.SET_HVAC_TEMPERATURE,
+                ActionType.LOCK_DOORS,
+                ActionType.UNLOCK_DOORS,
+                ActionType.PLAY_MEDIA,
+                -> executeVehicleAction(action)
                 ActionType.NONE -> Unit // unknown/no-op action — never crashes, never silently "succeeds"
             }
         }
     }
 
-    private suspend fun applySimulatedHvacTarget(action: SafeDriveAction) {
-        val target = action.hvacTargetTemperatureC
+    private suspend fun executeVehicleAction(action: SafeDriveAction) {
+        val command = when (action.type) {
+            ActionType.SET_HVAC_TEMPERATURE -> {
+                val target = action.hvacTargetTemperatureC
+                if (target == null) {
+                    _effects.send(AssistantUiEffect.ShowMessage("Thiếu nhiệt độ điều hòa cần đặt."))
+                    return
+                }
+                VehicleActionCommand.SetHvacTemperature(target)
+            }
+            ActionType.LOCK_DOORS -> VehicleActionCommand.LockDoors
+            ActionType.UNLOCK_DOORS -> VehicleActionCommand.UnlockDoors
+            ActionType.PLAY_MEDIA -> VehicleActionCommand.PlayMedia
+            else -> return
+        }
+        val execution = vehicleActionExecutor?.execute(command) ?: legacySimulation(command)
+        if (!execution.applied) {
+            _effects.send(AssistantUiEffect.ShowMessage(execution.message))
+            return
+        }
+        if (command is VehicleActionCommand.SetHvacTemperature) {
+            updateHvacReadBack(command.celsius)
+        }
+        appendVehicleActionMessage(action, execution.message)
+        _effects.send(AssistantUiEffect.ShowMessage(execution.message))
+    }
+
+    private fun legacySimulation(command: VehicleActionCommand): VehicleActionExecution =
+        if (command is VehicleActionCommand.SetHvacTemperature) {
+            VehicleActionExecution(
+                applied = true,
+                readBackVerified = false,
+                mode = VehicleActionMode.SIMULATION,
+                message = "Đã đặt điều hòa mô phỏng ở ${command.celsius.toInt()}°C.",
+            )
+        } else {
+            VehicleActionExecution(
+                applied = false,
+                readBackVerified = false,
+                mode = VehicleActionMode.UNAVAILABLE,
+                message = "Thiết bị chưa có bộ thực thi hành động xe.",
+            )
+        }
+
+    private suspend fun updateHvacReadBack(target: Float) {
         val snapshot = cockpitSnapshot.value
         val dataSource = vehicleDataSource
         val currentClock = clock
-        if (target == null || snapshot == null || dataSource == null || currentClock == null) {
-            _effects.send(AssistantUiEffect.ShowMessage("Không có đủ trạng thái xe để cập nhật HVAC mô phỏng."))
+        if (snapshot == null || dataSource == null || currentClock == null) {
             return
         }
         dataSource.updateManual(
@@ -221,9 +266,6 @@ class AssistantViewModel(
                 updatedAtMs = currentClock.nowMs(),
             ),
             driverSupportSignals = snapshot.driverSupportSignals,
-        )
-        _effects.send(
-            AssistantUiEffect.ShowMessage("Đã đặt điều hòa mô phỏng ở ${target.toInt()}°C."),
         )
     }
 }
