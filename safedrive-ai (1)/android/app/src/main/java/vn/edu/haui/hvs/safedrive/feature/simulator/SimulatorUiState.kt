@@ -32,6 +32,7 @@ data class SimulatorUiState(
     val manual: ManualTelemetryForm = ManualTelemetryForm(),
     val jsonPreview: String? = null,
     val developerMode: Boolean = false,
+    val adbTelemetryEnabled: Boolean = false,
     val backendMode: BackendMode = BackendMode.DEMO,
     /** Visible proof that the state selected on this screen reached the shared cockpit pipeline. */
     val syncMessage: String = "Mô phỏng cục bộ: trạng thái sẽ được áp dụng ngay.",

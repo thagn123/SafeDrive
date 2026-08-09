@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeDrive Telemetry Control</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="bg-animation">
+        <div id="stars"></div>
+        <div id="stars2"></div>
+        <div id="stars3"></div>
+    </div>
+
+    <div class="dashboard-container">
+        <header>
+            <div class="logo">
+                <div class="logo-icon"></div>
+                <h1>SafeDrive <span>Control Center</span></h1>
+            </div>
+            <div class="status-indicator">
+                <span class="dot pulse"></span>
+                <span>ADB Connected</span>
+            </div>
+        </header>
+
+        <div class="controls-grid">
+            <!-- Speed Control -->
+            <div class="glass-card control-panel">
+                <div class="panel-header">
+                    <h2>Vehicle Speed</h2>
+                    <span id="speed-value" class="value-display">0 km/h</span>
+                </div>
+                <div class="slider-container">
+                    <input type="range" id="speed-slider" min="0" max="220" value="0" class="premium-slider">
+                </div>
+                <div class="quick-actions">
+                    <button class="btn glass-btn" onclick="setSpeed(40)">40 km/h</button>
+                    <button class="btn glass-btn" onclick="setSpeed(80)">80 km/h</button>
+                    <button class="btn glass-btn" onclick="setSpeed(120)">120 km/h</button>
+                    <button class="btn glass-btn" onclick="setSpeed(0)">Stop</button>
+                </div>
+            </div>
+
+            <!-- Heart Rate Control -->
+            <div class="glass-card control-panel">
+                <div class="panel-header">
+                    <h2>Wearable Heart Rate</h2>
+                    <span id="hr-value" class="value-display">75 bpm</span>
+                </div>
+                <div class="slider-container">
+                    <input type="range" id="hr-slider" min="40" max="200" value="75" class="premium-slider hr-slider">
+                </div>
+                <div class="quick-actions">
+                    <button class="btn glass-btn" onclick="setHeartRate(75)">Normal</button>
+                    <button class="btn glass-btn" onclick="setHeartRate(120)">Elevated</button>
+                    <button class="btn glass-btn" onclick="setHeartRate(150)">High Stress</button>
+                    <button class="btn glass-btn" onclick="setHeartRate(0)">Disconnected</button>
+                </div>
+            </div>
+
+            <!-- Crash Injection -->
+            <div class="glass-card control-panel crash-panel">
+                <div class="panel-header">
+                    <h2>Emergency Injection</h2>
+                </div>
+                <div class="crash-container">
+                    <button id="crash-btn" class="btn danger-btn pulse-danger">
+                        <span>TRIGGER CRASH</span>
+                    </button>
+                </div>
+                <p class="help-text">Instantly sets speed to 0 and triggers crash flag.</p>
+            </div>
+
+            <!-- DTC Injection -->
+            <div class="glass-card control-panel dtc-panel">
+                <div class="panel-header">
+                    <h2>Sensor Faults (DTC)</h2>
+                </div>
+                <div class="dtc-controls">
+                    <select id="dtc-select" class="premium-select">
+                        <option value="CRITICAL_SENSOR_FAULT">CRITICAL_SENSOR_FAULT</option>
+                        <option value="VHAL_SPEED_DROP">VHAL_SPEED_DROP</option>
+                        <option value="STEERING_LOCKED">STEERING_LOCKED</option>
+                        <option value="BRAKE_FAILURE">BRAKE_FAILURE</option>
+                    </select>
+                    <div class="dtc-actions">
+                        <button class="btn warning-btn" onclick="injectDtc()">Inject Fault</button>
+                        <button class="btn glass-btn" onclick="clearDtc()">Clear Fault</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <div id="toast" class="toast hidden">Command Sent Successfully</div>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

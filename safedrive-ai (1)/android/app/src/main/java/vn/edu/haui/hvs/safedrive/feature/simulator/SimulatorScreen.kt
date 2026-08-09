@@ -27,6 +27,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +37,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.collectLatest
 import vn.edu.haui.hvs.safedrive.core.designsystem.Dimensions
@@ -57,6 +64,34 @@ fun SimulatorScreen(viewModel: SimulatorViewModel, onBack: () -> Unit) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var showAdvancedControls by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    DisposableEffect(state.adbTelemetryEnabled) {
+        if (state.adbTelemetryEnabled) {
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (intent?.action != "vn.edu.haui.hvs.safedrive.action.MOCK_TELEMETRY") return
+                    val speed = if (intent.hasExtra("speedKmh")) intent.getFloatExtra("speedKmh", 0f) else null
+                    val crash = if (intent.hasExtra("crashDetected")) intent.getBooleanExtra("crashDetected", false) else null
+                    val hr = if (intent.hasExtra("heartRate")) intent.getIntExtra("heartRate", -1).takeIf { it >= 0 } else null
+                    val dtcCode = intent.getStringExtra("dtcCode")
+                    val dtcClear = intent.getBooleanExtra("dtcClear", false)
+                    viewModel.injectAdbTelemetry(speed, crash, hr, dtcCode, dtcClear)
+                }
+            }
+            ContextCompat.registerReceiver(
+                context,
+                receiver,
+                IntentFilter("vn.edu.haui.hvs.safedrive.action.MOCK_TELEMETRY"),
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            onDispose {
+                context.unregisterReceiver(receiver)
+            }
+        } else {
+            onDispose {}
+        }
+    }
 
     LaunchedEffect(viewModel) {
         viewModel.effects.collectLatest { effect ->
@@ -100,6 +135,33 @@ fun SimulatorScreen(viewModel: SimulatorViewModel, onBack: () -> Unit) {
             .padding(Dimensions.screenPadding),
         verticalArrangement = Arrangement.spacedBy(Dimensions.cardSpacing),
     ) {
+        item {
+            androidx.compose.material3.Card(
+                colors = androidx.compose.material3.CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Nhận dữ liệu từ PC (ADB)", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Cho phép script gửi thông số qua ADB Broadcast.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                    Switch(
+                        checked = state.adbTelemetryEnabled,
+                        onCheckedChange = { viewModel.toggleAdbTelemetry(it) }
+                    )
+                }
+            }
+        }
         item {
             DemoFlowCard()
         }

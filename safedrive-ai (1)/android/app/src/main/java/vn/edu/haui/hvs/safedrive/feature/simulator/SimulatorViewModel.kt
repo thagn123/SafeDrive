@@ -72,12 +72,14 @@ class SimulatorViewModel(
         val jsonPreview: String?,
         val backendMode: BackendMode,
         val developerMode: Boolean,
+        val adbTelemetryEnabled: Boolean,
         val lastAppliedAtMs: Long?,
     )
 
     private val presets = fixtures.scenarioPresets()
     private val _selectedPresetId = MutableStateFlow<String?>(null)
     private val _manual = MutableStateFlow(ManualTelemetryForm())
+    private val _adbTelemetryEnabled = MutableStateFlow(false)
     private val _jsonPreview = MutableStateFlow<String?>(null)
     private val _lastAppliedAtMs = MutableStateFlow<Long?>(null)
     private val _effects = Channel<SimulatorUiEffect>(Channel.BUFFERED)
@@ -125,6 +127,7 @@ class SimulatorViewModel(
             jsonPreview = jsonPreview,
             backendMode = prefs.backendMode,
             developerMode = prefs.developerMode,
+            adbTelemetryEnabled = _adbTelemetryEnabled.value,
             lastAppliedAtMs = lastAppliedAtMs,
         )
     }
@@ -224,6 +227,55 @@ class SimulatorViewModel(
 
     fun showJsonPreview() {
         _jsonPreview.value = buildJsonPreview()
+    }
+
+    fun toggleAdbTelemetry(enabled: Boolean) {
+        _adbTelemetryEnabled.value = enabled
+    }
+
+    fun injectAdbTelemetry(
+        newSpeed: Float?,
+        newCrash: Boolean?,
+        newHeartRate: Int?,
+        dtcCode: String?,
+        dtcClear: Boolean
+    ) {
+        val currentVehicleState = vehicleDataSource.vehicleState.value
+        val currentDriverSignals = vehicleDataSource.driverSupportSignals.value
+
+        val activeDtcs = currentVehicleState.activeDtcs.toMutableList()
+        if (dtcCode != null) {
+            if (dtcClear) {
+                activeDtcs.removeAll { it.code == dtcCode }
+            } else {
+                if (activeDtcs.none { it.code == dtcCode }) {
+                    activeDtcs.add(
+                        vn.edu.haui.hvs.safedrive.core.model.Dtc(
+                            code = dtcCode,
+                            title = "Lỗi ADB ($dtcCode)",
+                            description = "Tiêm từ lệnh ADB",
+                            severity = vn.edu.haui.hvs.safedrive.core.model.Severity.CRITICAL,
+                            recommendation = "Kiểm tra ngay",
+                            updatedAtMs = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
+
+        val updatedVehicleState = currentVehicleState.copy(
+            speedKmh = newSpeed ?: currentVehicleState.speedKmh,
+            crashDetected = newCrash ?: currentVehicleState.crashDetected,
+            activeDtcs = activeDtcs,
+            updatedAtMs = System.currentTimeMillis()
+        )
+
+        val updatedDriverSignals = currentDriverSignals.copy(
+            wearableHeartRateBpm = newHeartRate ?: currentDriverSignals.wearableHeartRateBpm,
+            wearableLastUpdateMs = if (newHeartRate != null) System.currentTimeMillis() else currentDriverSignals.wearableLastUpdateMs
+        )
+
+        vehicleDataSource.updateManual(updatedVehicleState, updatedDriverSignals)
     }
 
     fun hideJsonPreview() {
