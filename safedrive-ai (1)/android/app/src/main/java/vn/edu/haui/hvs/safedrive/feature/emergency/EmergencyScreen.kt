@@ -370,7 +370,12 @@ private fun SpeedSparkline(samples: List<Float>, modifier: Modifier = Modifier) 
         } else {
             val minValue = samples.min()
             val maxValue = samples.max()
-            val range = (maxValue - minValue).coerceAtLeast(1f)
+            // Real variance in the window vs. not: below this, treat speed as flat and center the
+            // line vertically. Without this branch, a genuinely flat signal (very common here —
+            // the manual Simulator form sets one speed value that then never changes) maps every
+            // point's normalized position to 0, which pins the line to the exact bottom edge —
+            // easy to mistake for an empty chart, confirmed live on-device.
+            val actualRange = maxValue - minValue
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -379,7 +384,12 @@ private fun SpeedSparkline(samples: List<Float>, modifier: Modifier = Modifier) 
                     .background(Color(0xFF0B1622), RoundedCornerShape(8.dp)),
             ) {
                 val stepX = size.width / (samples.size - 1)
-                fun yOf(value: Float) = size.height - ((value - minValue) / range) * size.height
+                val verticalPadding = 8f
+                val drawableHeight = (size.height - verticalPadding * 2).coerceAtLeast(1f)
+                fun yOf(value: Float): Float {
+                    val normalized = if (actualRange < 0.5f) 0.5f else (value - minValue) / actualRange
+                    return verticalPadding + (1f - normalized) * drawableHeight
+                }
                 val points = samples.mapIndexed { index, value -> Offset(index * stepX, yOf(value)) }
                 val path = Path().apply { moveTo(points[0].x, points[0].y) }
                 // Cubic-Bezier through each pair of real points (never averaged/smoothed away) so a
