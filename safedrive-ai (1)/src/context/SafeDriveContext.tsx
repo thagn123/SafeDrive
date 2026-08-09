@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { 
   VehicleState, 
   RiskAssessment, 
@@ -322,54 +322,111 @@ export const SafeDriveProvider: React.FC<{ children: ReactNode }> = ({ children 
     setSosConfirmed(false);
   }, []);
 
-  // TTS Speech Synthesis helper
-  const speakText = useCallback((text: string) => {
-    if (!settings.ttsEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  // ─── Continuous Voice Loop ───
+  const isContinuousVoiceRef = useRef<boolean>(false);
+  const recognitionRef = useRef<any>(null);
+
+  // Guard refs to prevent double-submission and error-after-end conflicts
+  const latestTranscriptRef = useRef<string>('');
+  const isSubmittingRef = useRef<boolean>(false);
+  const hasRecognitionErrorRef = useRef<boolean>(false);
+
+  // Refs that always point to the latest version of functions
+  // This breaks the circular useCallback dependency chain:
+  //   sendChatMessage → triggerWakeWord → submitVoiceQuery → sendChatMessage
+  const triggerWakeWordRef = useRef<() => void>(() => {});
+  const submitVoiceQueryRef = useRef<(text: string) => Promise<void>>(async () => {});
+  const cancelVoiceRef = useRef<() => void>(() => {});
+
+  const checkIsExitPhrase = (text: string): boolean => {
+    const lower = text.toLowerCase().trim();
+    return (
+      lower === 'hết rồi' ||
+      lower === 'kết thúc' ||
+      lower === 'hết' ||
+      lower === 'dừng' ||
+      lower === 'dừng lại' ||
+      lower === 'thôi' ||
+      lower === 'tạm biệt' ||
+      lower.includes('hết rồi') ||
+      lower.includes('kết thúc') ||
+      lower.includes('dừng lại') ||
+      lower.includes('không còn') ||
+      lower.includes('tạm biệt')
+    );
+  };
+
+  // ─── TTS with onEnd callback ───
+  const speakText = useCallback((text: string, onEndCallback?: () => void) => {
+    if (!settings.ttsEnabled || typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      // Even with TTS off, fire callback after a short delay so the loop can continue
+      if (onEndCallback) setTimeout(onEndCallback, 1500);
+      return;
+    }
     try {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'vi-VN';
       utterance.rate = 1.0;
+
+      let fired = false;
+      const fire = () => {
+        if (!fired) { fired = true; if (onEndCallback) onEndCallback(); }
+      };
+      utterance.onend = fire;
+      utterance.onerror = fire;
       window.speechSynthesis.speak(utterance);
+
+      // Safety fallback: if utterance somehow never fires onend (browser quirk)
+      const safetyTimeout = Math.max(text.length * 120, 5000);
+      setTimeout(() => { fire(); }, safetyTimeout);
     } catch {
-      // Ignore audio synthesis errors
+      if (onEndCallback) setTimeout(onEndCallback, 1500);
     }
   }, [settings.ttsEnabled]);
 
-  // Voice Assistant Flow
-  const triggerWakeWord = useCallback(() => {
-    if (!settings.wakeWordEnabled) {
-      setVoiceState('DISABLED');
-      return;
+  // ─── Stop recognition helper ───
+  const stopSpeechRecognition = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.stop();
+      } catch { /* ignore */ }
+      recognitionRef.current = null;
     }
-    setVoiceState('WAKE_WORD_DETECTED');
-    setVoiceTranscript('');
-    setVoiceResponseText('');
+  }, []);
 
-    // Play subtle audio cue or proceed to LISTENING
-    setTimeout(() => {
-      setVoiceState('LISTENING');
-    }, 600);
-  }, [settings.wakeWordEnabled]);
-
-  const cancelVoice = useCallback(() => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    setVoiceState(settings.wakeWordEnabled ? 'IDLE' : 'DISABLED');
-    setVoiceTranscript('');
-    setVoiceResponseText('');
-  }, [settings.wakeWordEnabled]);
-
+  // ─── stopSpeaking ───
   const stopSpeaking = useCallback(() => {
+    isContinuousVoiceRef.current = false;
+    stopSpeechRecognition();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try { window.speechSynthesis.cancel(); } catch {}
     }
     setVoiceState(settings.wakeWordEnabled ? 'IDLE' : 'DISABLED');
-  }, [settings.wakeWordEnabled]);
+  }, [settings.wakeWordEnabled, stopSpeechRecognition]);
 
-  // Mock Intelligent Backend Response
+  // ─── cancelVoice ───
+  const cancelVoice = useCallback(() => {
+    isContinuousVoiceRef.current = false;
+    stopSpeechRecognition();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch {}
+    }
+    setVoiceState(settings.wakeWordEnabled ? 'IDLE' : 'DISABLED');
+    setVoiceTranscript('');
+    setVoiceResponseText('');
+  }, [settings.wakeWordEnabled, stopSpeechRecognition]);
+
+  // Keep ref in sync
+  useEffect(() => { cancelVoiceRef.current = cancelVoice; }, [cancelVoice]);
+
+  // ─── sendChatMessage ───
   const sendChatMessage = useCallback(async (userText: string) => {
+    setPendingPrompt('');
+
     const userMsg: ChatMessage = {
       id: `msg_user_${Date.now()}`,
       sender: 'USER',
@@ -381,7 +438,7 @@ export const SafeDriveProvider: React.FC<{ children: ReactNode }> = ({ children 
     setIsAssistantThinking(true);
 
     const latencyMs = Math.floor(Math.random() * 200) + 240;
-    
+
     setTimeout(() => {
       let replyText = '';
       let replyRisk: RiskAssessment | undefined = evaluateRisk(vehicleState);
@@ -389,20 +446,19 @@ export const SafeDriveProvider: React.FC<{ children: ReactNode }> = ({ children 
       let route = 'safety_fast_path';
 
       const lower = userText.toLowerCase();
+      const isExit = checkIsExitPhrase(userText);
 
-      if (!settings.isConnected) {
+      if (isExit) {
+        replyText = 'Cảm ơn bạn! Chúc bạn luôn có những chuyến đi thượng lộ bình an và lái xe an toàn.';
+        isContinuousVoiceRef.current = false;
+      } else if (!settings.isConnected) {
         replyText = 'Không thể kết nối với máy chủ SafeDrive AI. Các cảnh báo an toàn và chẩn đoán nội bộ trên xe vẫn đang hoạt động bình thường.';
         route = 'offline_fallback';
       } else if (lower.includes('nhiệt độ') || lower.includes('nhiệt')) {
         replyText = `Nhiệt độ động cơ hiện tại là ${vehicleState.engineTemperatureC}°C và nhiệt độ cabin là ${vehicleState.cabinTemperatureC}°C. `;
         if (vehicleState.engineTemperatureC >= 108) {
           replyText += 'Động cơ đang ở mức quá nhiệt! Vui lòng giảm tốc độ và kiểm tra hệ thống làm mát.';
-          replyActions.push({
-            id: 'act_overheat',
-            type: 'SHOW_WARNING',
-            title: 'Mở cảnh báo quá nhiệt',
-            requiresConfirmation: false
-          });
+          replyActions.push({ id: 'act_overheat', type: 'SHOW_WARNING', title: 'Mở cảnh báo quá nhiệt', requiresConfirmation: false });
         } else {
           replyText += 'Hệ thống làm mát vẫn làm việc bình thường.';
         }
@@ -410,12 +466,7 @@ export const SafeDriveProvider: React.FC<{ children: ReactNode }> = ({ children 
         if (vehicleState.activeDtcs.length > 0) {
           const dtcList = vehicleState.activeDtcs.map(d => `${d.code}: ${d.title}`).join('; ');
           replyText = `Hệ thống ghi nhận ${vehicleState.activeDtcs.length} mã lỗi: ${dtcList}. Khuyên bạn nên đưa xe đến trạm dịch vụ chuyên nghiệp.`;
-          replyActions.push({
-            id: 'act_dtc_nav',
-            type: 'OPEN_DIAGNOSTICS',
-            title: 'Xem chi tiết chẩn đoán',
-            requiresConfirmation: false
-          });
+          replyActions.push({ id: 'act_dtc_nav', type: 'OPEN_DIAGNOSTICS', title: 'Xem chi tiết chẩn đoán', requiresConfirmation: false });
         } else {
           replyText = 'Hiện tại không phát hiện bất kỳ mã lỗi chẩn đoán DTC nào trên hệ thống điều khiển xe.';
         }
@@ -423,20 +474,10 @@ export const SafeDriveProvider: React.FC<{ children: ReactNode }> = ({ children 
         const mins = vehicleState.driverSupportSignals.continuousDrivingMinutes;
         const timeStr = mins ? `${Math.floor(mins / 60)} giờ ${mins % 60} phút` : 'chưa xác định';
         replyText = `Thời gian lái xe liên tục hiện tại: ${timeStr}. Dựa trên các tín hiệu hỗ trợ gián tiếp (vô lăng, ghế lái), SafeDrive khuyên bạn nên cân nhắc dừng nghỉ tại vị trí an toàn.`;
-        replyActions.push({
-          id: 'act_rest_stop',
-          type: 'SUGGEST_REST_STOP',
-          title: 'Đề xuất dừng nghỉ',
-          requiresConfirmation: true
-        });
+        replyActions.push({ id: 'act_rest_stop', type: 'SUGGEST_REST_STOP', title: 'Đề xuất dừng nghỉ', requiresConfirmation: true });
       } else if (lower.includes('sos') || lower.includes('va chạm') || lower.includes('cứu hộ')) {
         replyText = 'Đang kiểm tra tình trạng an toàn khẩn cấp. Phát hiện yêu cầu trợ giúp cứu hộ!';
-        replyActions.push({
-          id: 'act_sos_start',
-          type: 'START_SOS_COUNTDOWN',
-          title: 'Mở đếm ngược SOS mô phỏng',
-          requiresConfirmation: true
-        });
+        replyActions.push({ id: 'act_sos_start', type: 'START_SOS_COUNTDOWN', title: 'Mở đếm ngược SOS mô phỏng', requiresConfirmation: true });
       } else if (lower.includes('tốc độ') || lower.includes('vận tốc')) {
         replyText = `Xe đang di chuyển với vận tốc ${vehicleState.speedKmh} km/h. Giới hạn an toàn trên tuyến đường là 80 km/h.`;
       } else if (lower.includes('pin') || lower.includes('nhiên liệu')) {
@@ -447,10 +488,16 @@ export const SafeDriveProvider: React.FC<{ children: ReactNode }> = ({ children 
         replyText = `Tôi đã nhận câu hỏi: "${userText}". Các thông số vận hành xe (Tốc độ: ${vehicleState.speedKmh}km/h, Thời gian lái liên tục: ${timeStr}) đang được tổng hợp và theo dõi theo thời gian thực.`;
       }
 
+      // Append follow-up question if in continuous voice mode and not exit
+      let fullText = replyText;
+      if (isContinuousVoiceRef.current && !isExit) {
+        fullText += ' ... Bạn còn câu hỏi nào cho tôi không?';
+      }
+
       const botMsg: ChatMessage = {
         id: `msg_bot_${Date.now()}`,
         sender: 'SAFEDRIVE',
-        text: replyText,
+        text: fullText,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         risk: replyRisk,
         actions: replyActions,
@@ -460,19 +507,182 @@ export const SafeDriveProvider: React.FC<{ children: ReactNode }> = ({ children 
 
       setChatMessages(prev => [...prev, botMsg]);
       setIsAssistantThinking(false);
-      speakText(replyText);
+      setVoiceResponseText(fullText);
 
-      // Return text for voice state machine if active
-      setVoiceResponseText(replyText);
+      if (isExit) {
+        // Say goodbye then close overlay
+        speakText(fullText, () => {
+          cancelVoiceRef.current();
+        });
+      } else {
+        // Speak reply, then auto-restart mic for next question
+        speakText(fullText, () => {
+          if (isContinuousVoiceRef.current) {
+            setTimeout(() => {
+              triggerWakeWordRef.current();
+            }, 500);
+          }
+        });
+      }
     }, latencyMs);
   }, [vehicleState, settings.isConnected, speakText]);
 
+  // ─── submitVoiceQuery ───
   const submitVoiceQuery = useCallback(async (text: string) => {
+    isContinuousVoiceRef.current = true;
+    stopSpeechRecognition();
     setVoiceTranscript(text);
     setVoiceState('PROCESSING');
     await sendChatMessage(text);
+    // Clear transcript after sending so UI doesn't show stale text
+    setVoiceTranscript('');
+    latestTranscriptRef.current = '';
     setVoiceState('SPEAKING');
-  }, [sendChatMessage]);
+  }, [sendChatMessage, stopSpeechRecognition]);
+
+  // Keep ref in sync
+  useEffect(() => { submitVoiceQueryRef.current = submitVoiceQuery; }, [submitVoiceQuery]);
+
+  // ─── startListening: create and start a SpeechRecognition session ───
+  const startListening = useCallback(() => {
+    stopSpeechRecognition();
+
+    // Reset all guard refs for this new listening session
+    latestTranscriptRef.current = '';
+    isSubmittingRef.current = false;
+    hasRecognitionErrorRef.current = false;
+
+    const SR = typeof window !== 'undefined' &&
+      ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition);
+
+    if (!SR) {
+      // Fallback: just show LISTENING state for manual input
+      setVoiceState('LISTENING');
+      return;
+    }
+
+    try {
+      const recognition = new SR();
+      recognition.lang = 'vi-VN';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+
+      recognition.onstart = () => {
+        setVoiceState('LISTENING');
+      };
+
+      recognition.onresult = (event: any) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        // Store in both state (for UI display) and ref (for onend to read)
+        setVoiceTranscript(transcript);
+        latestTranscriptRef.current = transcript;
+      };
+
+      recognition.onerror = (event: any) => {
+        const err = event?.error;
+        console.warn('SpeechRecognition error:', err);
+        // Mark that an error occurred so onend won't try to submit
+        hasRecognitionErrorRef.current = true;
+        recognitionRef.current = null;
+
+        if (err === 'not-allowed') {
+          // Permission denied — stop completely
+          isContinuousVoiceRef.current = false;
+          setVoiceState('ERROR');
+          setVoiceResponseText('Chưa cấp quyền Microphone. Vui lòng bật quyền mic trong trình duyệt.');
+        } else if (isContinuousVoiceRef.current) {
+          // no-speech, aborted, network, etc. → AUTO-RESTART listening to keep conversation going
+          console.log('Continuous mode: auto-restarting after error:', err);
+          setVoiceTranscript('');
+          latestTranscriptRef.current = '';
+          setTimeout(() => {
+            triggerWakeWordRef.current();
+          }, 600);
+        } else {
+          // Not in continuous mode → just go idle
+          setVoiceState('IDLE');
+        }
+      };
+
+      recognition.onend = () => {
+        recognitionRef.current = null;
+
+        // If onerror already fired, it handled the restart/idle logic
+        if (hasRecognitionErrorRef.current) return;
+
+        // Guard: prevent double-submission
+        if (isSubmittingRef.current) return;
+
+        // Read transcript from ref (NOT from state updater — avoids React calling it twice)
+        const trimmed = latestTranscriptRef.current.trim();
+        if (trimmed) {
+          isSubmittingRef.current = true;
+          submitVoiceQueryRef.current(trimmed);
+        } else if (isContinuousVoiceRef.current) {
+          // Empty transcript but in continuous mode → auto-restart
+          console.log('Continuous mode: no speech detected, restarting...');
+          setVoiceTranscript('');
+          latestTranscriptRef.current = '';
+          setTimeout(() => {
+            triggerWakeWordRef.current();
+          }, 600);
+        } else {
+          setVoiceState(prev => (prev === 'LISTENING' ? 'IDLE' : prev));
+        }
+      };
+
+      recognitionRef.current = recognition;
+
+      setTimeout(() => {
+        try {
+          if (recognitionRef.current) {
+            recognitionRef.current.start();
+          }
+        } catch (e) {
+          console.warn('Failed to start recognition:', e);
+          setVoiceState('LISTENING');
+        }
+      }, 300);
+    } catch (e) {
+      console.warn('SpeechRecognition init error:', e);
+      setVoiceState('LISTENING');
+    }
+  }, [stopSpeechRecognition]);
+
+  // ─── triggerWakeWord ───
+  const triggerWakeWord = useCallback(() => {
+    if (!settings.wakeWordEnabled) {
+      setVoiceState('DISABLED');
+      return;
+    }
+
+    isContinuousVoiceRef.current = true;
+
+    // Stop ongoing TTS
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch {}
+    }
+
+    stopSpeechRecognition();
+
+    setVoiceState('WAKE_WORD_DETECTED');
+    setVoiceTranscript('');
+    setVoiceResponseText('');
+    latestTranscriptRef.current = '';
+    isSubmittingRef.current = false;
+    hasRecognitionErrorRef.current = false;
+
+    // Brief visual pause, then start listening
+    setTimeout(() => {
+      startListening();
+    }, 400);
+  }, [settings.wakeWordEnabled, stopSpeechRecognition, startListening]);
+
+  // Keep ref in sync
+  useEffect(() => { triggerWakeWordRef.current = triggerWakeWord; }, [triggerWakeWord]);
 
   return (
     <SafeDriveContext.Provider

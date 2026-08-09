@@ -55,6 +55,7 @@ fun SafeDriveNavHost(navController: NavHostController, container: SafeDriveConta
                             vehicleDataSource = container.vehicleDataSource,
                             vehicleActionExecutor = container.vehicleActionExecutor,
                             clock = container.clock,
+                            voiceController = container.voiceController,
                         )
                     }
                 },

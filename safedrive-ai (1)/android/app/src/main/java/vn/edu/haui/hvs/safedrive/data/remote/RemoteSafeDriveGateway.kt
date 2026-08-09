@@ -2,10 +2,6 @@ package vn.edu.haui.hvs.safedrive.data.remote
 
 import java.io.IOException
 import java.net.SocketTimeoutException
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.produceIn
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerializationException
 import retrofit2.Response
 import vn.edu.haui.hvs.safedrive.core.common.GatewayError
@@ -27,24 +23,13 @@ import vn.edu.haui.hvs.safedrive.core.model.StateEnvelope
 import vn.edu.haui.hvs.safedrive.core.model.StateUpdateRequest
 import vn.edu.haui.hvs.safedrive.domain.repository.SafeDriveGateway
 
-/** How long [queryAssistant] will wait without *any* frame (heartbeat, final, or error) over the
- * WebSocket transport before giving up -- reset on every frame, so a real (possibly multi-second,
- * e.g. cold-start Ollama) narration call is no longer bounded by a single fixed HTTP read timeout,
- * as long as the server keeps proving it's still working. [AssistantQueryUseCase][vn.edu.haui.hvs.safedrive.domain.usecase.AssistantQueryUseCase]
- * still applies its own generous *outer* cap around session resolution + this call together, as a
- * backstop against a genuinely hung connection. */
-private const val ASSISTANT_QUERY_SILENCE_TIMEOUT_MS = 10_000L
-
 /**
  * Remote Mode implementation of [SafeDriveGateway], matching
  * docs/android-mvp-plan/03-data-api-contract.md's endpoint matrix and error mapping table exactly.
  * Must pass the same contract tests as `MockSafeDriveGateway` — see
  * `SafeDriveGatewayContractTest` and its two subclasses.
  */
-class RemoteSafeDriveGateway(
-    private val api: SafeDriveApi,
-    private val socketClient: AssistantSocketClient,
-) : SafeDriveGateway {
+class RemoteSafeDriveGateway(private val api: SafeDriveApi) : SafeDriveGateway {
 
     override suspend fun checkHealth(): GatewayResult<HealthStatus> {
         val liveness = safeCall({ api.checkHealth() }) { it.toDomain() }
@@ -72,56 +57,8 @@ class RemoteSafeDriveGateway(
     override suspend fun getVehicleState(sessionId: String, sinceVersion: Long?): GatewayResult<StateEnvelope> =
         safeCall({ api.getState(sessionId, sinceVersion) }) { it.toDomain() }
 
-    /**
-     * Runs over [AssistantSocketClient]'s heartbeating WebSocket transport instead of one-shot
-     * HTTP -- internally waits past any number of `{"type":"heartbeat"}` frames the server sends
-     * while a real narration call is in flight, resetting [ASSISTANT_QUERY_SILENCE_TIMEOUT_MS] on
-     * each one, so this suspend function itself only returns once the server sends a genuine
-     * final/error frame or goes silent for that long. The heartbeat mechanics are entirely
-     * internal to this class -- callers (and every existing `SafeDriveGateway` test double that
-     * only overrides `queryAssistant`) see the exact same one-shot suspend contract as before.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
     override suspend fun queryAssistant(request: AssistantQueryRequest): GatewayResult<AssistantQueryResult> =
-        try {
-            coroutineScope {
-                val channel = socketClient.query(request.sessionId, request.toDto()).produceIn(this)
-                try {
-                    var result: GatewayResult<AssistantQueryResult>? = null
-                    while (result == null) {
-                        val received = withTimeoutOrNull(ASSISTANT_QUERY_SILENCE_TIMEOUT_MS) {
-                            channel.receiveCatching()
-                        }
-                        if (received == null) {
-                            result = GatewayResult.Failure(GatewayError.Timeout)
-                            continue
-                        }
-                        when (val event = received.getOrNull()) {
-                            null -> {
-                                val cause = received.exceptionOrNull()
-                                result = GatewayResult.Failure(
-                                    if (cause != null) {
-                                        mapSocketException(cause)
-                                    } else {
-                                        GatewayError.Unexpected("Assistant socket closed without a result")
-                                    },
-                                )
-                            }
-                            is AssistantSocketEvent.Heartbeat -> Unit // loop again, silence timer resets
-                            is AssistantSocketEvent.Final -> result = GatewayResult.Success(event.response.toDomain())
-                            is AssistantSocketEvent.Error ->
-                                result = GatewayResult.Failure(mapSocketErrorCode(event.code, event.message))
-                        }
-                    }
-                    result
-                } finally {
-                    channel.cancel()
-                }
-            }
-        } catch (e: Throwable) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            GatewayResult.Failure(mapSocketException(e))
-        }
+        safeCall({ api.queryAssistant(request.toDto()) }) { it.toDomain() }
 
     override suspend fun sendEvent(event: SafeDriveEvent): GatewayResult<EventAccepted> =
         safeCall({ api.sendEvent(event.toDto()) }) { it.toDomain() }
@@ -195,27 +132,6 @@ class RemoteSafeDriveGateway(
         // An unrecognized code — e.g. a future backend's new value — falls back to the HTTP status
         // alone rather than guessing or crashing.
         else -> mapHttpError(httpStatus)
-    }
-
-    /** Same closed code set as [mapErrorCode], for the WebSocket `{"type":"error"}` frame, which
-     * carries a `code` directly (see `app/api/routes/assistant_ws.py`) with no HTTP status to fall
-     * back on. */
-    private fun mapSocketErrorCode(code: String?, message: String?): GatewayError = when (code) {
-        "TIMEOUT" -> GatewayError.Timeout
-        "OFFLINE" -> GatewayError.Offline
-        "UNAUTHORIZED" -> GatewayError.Unauthorized
-        "UNSUPPORTED" -> GatewayError.Unsupported
-        "CONFLICT" -> GatewayError.Conflict(message)
-        "VALIDATION" -> GatewayError.Validation(message)
-        "SERVER" -> GatewayError.Server(message = message)
-        else -> GatewayError.Protocol(message)
-    }
-
-    private fun mapSocketException(t: Throwable): GatewayError = when (t) {
-        is SocketTimeoutException -> GatewayError.Timeout
-        is SerializationException -> GatewayError.Protocol(t.message)
-        is IOException -> GatewayError.Offline
-        else -> GatewayError.Unexpected(t.message)
     }
 
     private fun mapHttpError(code: Int): GatewayError = when (code) {

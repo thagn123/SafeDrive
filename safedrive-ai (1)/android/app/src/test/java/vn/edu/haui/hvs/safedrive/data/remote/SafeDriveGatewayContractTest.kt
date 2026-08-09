@@ -55,10 +55,7 @@ abstract class SafeDriveGatewayContractTest {
     }
 
     @Test
-    fun `queryAssistant returns a non-empty SAFEDRIVE reply for the same requestId`() = kotlinx.coroutines.runBlocking {
-        // runBlocking, not runTest: RemoteSafeDriveGateway's implementation now does real
-        // WebSocket I/O internally, which kotlinx-coroutines-test's virtual-time scheduler
-        // doesn't reliably wake up for (real OkHttp callback threads vs. a StandardTestDispatcher).
+    fun `queryAssistant returns a non-empty SAFEDRIVE reply for the same requestId`() = runTest {
         val result = buildGateway().queryAssistant(
             AssistantQueryRequest("sess_1", "req_1", "Xin chào", context = AssistantContext(0L, "assistant")),
         )

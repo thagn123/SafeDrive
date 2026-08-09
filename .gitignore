@@ -34,3 +34,6 @@ safedrive-ai (1)/android/local.properties
 
 # Logs
 *.log
+
+# IDE
+.idea/

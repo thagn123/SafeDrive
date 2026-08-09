@@ -35,7 +35,6 @@ import vn.edu.haui.hvs.safedrive.data.mock.MockPolicyEvaluator
 import vn.edu.haui.hvs.safedrive.data.mock.MockSafeDriveGateway
 import vn.edu.haui.hvs.safedrive.data.remote.ConfigurationErrorGateway
 import vn.edu.haui.hvs.safedrive.data.remote.ModeAwareEmergencyRepository
-import vn.edu.haui.hvs.safedrive.data.remote.AssistantSocketClient
 import vn.edu.haui.hvs.safedrive.data.remote.RemoteSafeDriveGateway
 import vn.edu.haui.hvs.safedrive.data.remote.SafeDriveApi
 import vn.edu.haui.hvs.safedrive.domain.repository.AppPreferences
@@ -136,10 +135,8 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
         cachedRemote?.let { (url, gateway) -> if (url == baseUrl) return gateway }
         synchronized(remoteGatewayLock) {
             cachedRemote?.let { (url, gateway) -> if (url == baseUrl) return gateway }
-            val client = NetworkModule.createOkHttpClient(allowCleartext = BuildConfig.ALLOW_CLEARTEXT_DEBUG)
-            val retrofit = NetworkModule.buildRetrofit(baseUrl, client)
-            val socketClient = AssistantSocketClient(client, baseUrl)
-            val gateway = RemoteSafeDriveGateway(retrofit.create(SafeDriveApi::class.java), socketClient)
+            val retrofit = NetworkModule.createRetrofit(baseUrl, allowCleartext = BuildConfig.ALLOW_CLEARTEXT_DEBUG)
+            val gateway = RemoteSafeDriveGateway(retrofit.create(SafeDriveApi::class.java))
             cachedRemote = baseUrl to gateway
             return gateway
         }
@@ -282,6 +279,7 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
         voiceController = voiceController,
         assistantTurnCoordinator = assistantTurnCoordinator,
         emergencyRepository = emergencyRepository,
+        ttsController = ttsController,
         externalScope = applicationScope,
     )
 

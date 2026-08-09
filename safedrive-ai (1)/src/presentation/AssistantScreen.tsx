@@ -13,7 +13,9 @@ export const AssistantScreen: React.FC = () => {
     executeAction,
     pendingPrompt,
     clearPendingPrompt,
-    triggerWakeWord
+    triggerWakeWord,
+    voiceState,
+    voiceTranscript
   } = useSafeDrive();
 
   const [inputQuery, setInputQuery] = useState('');
@@ -27,6 +29,26 @@ export const AssistantScreen: React.FC = () => {
     }
   }, [pendingPrompt, clearPendingPrompt]);
 
+  // Sync input query with live transcript while listening/processing
+  useEffect(() => {
+    if (voiceTranscript && (voiceState === 'LISTENING' || voiceState === 'PROCESSING')) {
+      setInputQuery(voiceTranscript);
+    }
+  }, [voiceTranscript, voiceState]);
+
+  // Auto-clear input field when voice state transitions
+  useEffect(() => {
+    if (
+      voiceState === 'SPEAKING' ||
+      voiceState === 'IDLE' ||
+      voiceState === 'ERROR' ||
+      voiceState === 'WAKE_WORD_DETECTED' ||
+      voiceState === 'PROCESSING'
+    ) {
+      setInputQuery('');
+    }
+  }, [voiceState]);
+
   // Auto scroll to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -38,6 +60,12 @@ export const AssistantScreen: React.FC = () => {
 
     setInputQuery('');
     await sendChatMessage(query);
+    setInputQuery('');
+  };
+
+  const handleMicClick = () => {
+    setInputQuery('');
+    triggerWakeWord();
   };
 
   const handleQuickPrompt = (promptText: string) => {
@@ -168,7 +196,7 @@ export const AssistantScreen: React.FC = () => {
           {/* Mic simulator button */}
           <button
             type="button"
-            onClick={triggerWakeWord}
+            onClick={handleMicClick}
             className="p-3 rounded-xl border border-slate-700 bg-[#08131F] text-cyan-400 hover:text-white hover:border-cyan-500 transition"
             title="Kích hoạt Hey SafeDrive (Giọng nói)"
           >

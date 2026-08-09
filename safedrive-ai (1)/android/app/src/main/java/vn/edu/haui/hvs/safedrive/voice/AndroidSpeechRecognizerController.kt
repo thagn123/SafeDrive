@@ -11,6 +11,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.core.content.ContextCompat
+import android.util.Log
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -455,6 +456,12 @@ class AndroidSpeechRecognizerController(
      * [generation] on a different thread while one of these callbacks is partway through its own body,
      * having already read [generation] and found itself still current). */
     private fun listenerFor(gen: Long, screen: String) = object : RecognitionListener {
+        // Persists the last non-blank partial transcript across callbacks. The recognizer often
+        // sends a final onPartialResults("") right before onResults, clearing the state's
+        // partialTranscript — this variable survives that clearing so onResults/onError can
+        // still fall back to it when the final result is empty.
+        var lastNonBlankPartial: String = ""
+
         override fun onReadyForSpeech(params: Bundle?) {
             synchronized(callbackLock) {
                 if (gen != generation.get()) return
@@ -481,7 +488,17 @@ class AndroidSpeechRecognizerController(
         override fun onError(error: Int) {
             synchronized(callbackLock) {
                 if (gen != generation.get()) return
-                publishError(mapErrorCode(error))
+                Log.d("SafeDriveVoiceDebug", "[SR] onError: code=$error (${mapErrorCode(error)}), lastNonBlankPartial='$lastNonBlankPartial'")
+                // If we already have a non-blank partial transcript and the error is
+                // NO_MATCH or SPEECH_TIMEOUT, treat the last partial as the final result
+                // instead of discarding it. Google's speech recognizer on some devices/languages
+                // produces partials but then times out without ever calling onResults with text.
+                if (lastNonBlankPartial.isNotBlank() && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) {
+                    Log.d("SafeDriveVoiceDebug", "[SR] onError: recovering partial='$lastNonBlankPartial' as final transcript")
+                    promotePartialToFinal(lastNonBlankPartial, gen, screen)
+                } else {
+                    publishError(mapErrorCode(error))
+                }
             }
         }
 
@@ -497,6 +514,9 @@ class AndroidSpeechRecognizerController(
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     .orEmpty()
+                if (text.isNotBlank()) {
+                    lastNonBlankPartial = text
+                }
                 _state.update { it.copy(partialTranscript = text) }
             }
         }
@@ -504,20 +524,27 @@ class AndroidSpeechRecognizerController(
         override fun onResults(results: Bundle?) {
             synchronized(callbackLock) {
                 if (gen != generation.get()) return
-                val text = results
+                var text = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     .orEmpty()
+                Log.d("SafeDriveVoiceDebug", "[SR] onResults: text='$text', lastNonBlankPartial='$lastNonBlankPartial'")
+                // Fallback: if the recognizer returns an empty final result but we already
+                // captured a non-blank partial transcript, use that partial as the final.
+                // This is common on some devices/languages (e.g. Vietnamese on Samsung) where
+                // partials are produced but onResults arrives with an empty list.
+                // NOTE: We use lastNonBlankPartial (not _state.value.partialTranscript) because
+                // the recognizer sends onPartialResults('') right before onResults, clearing the state.
                 if (text.isBlank()) {
-                    // Empty transcript is never sent (docs/android-mvp-plan/05-voice-emergency.md).
-                    _state.update { it.copy(state = VoiceState.IDLE, partialTranscript = "", finalTranscript = "") }
-                    return
+                    if (lastNonBlankPartial.isNotBlank()) {
+                        Log.d("SafeDriveVoiceDebug", "[SR] onResults: empty result, recovering lastNonBlankPartial='$lastNonBlankPartial' as final")
+                        text = lastNonBlankPartial
+                    } else {
+                        Log.d("SafeDriveVoiceDebug", "[SR] onResults: empty result and no partial -> IDLE")
+                        _state.update { it.copy(state = VoiceState.IDLE, partialTranscript = "", finalTranscript = "") }
+                        return
+                    }
                 }
-                // Explicitly re-stamps generation = gen (not just `.copy()`, which would already preserve
-                // it here) so this session's own PROCESSING and the event it is about to enqueue are
-                // minted together, unambiguously, from the same source of truth (independent re-audit
-                // follow-up, eighth pass) — see VoiceInputEvent.generation's KDoc for the pre-claim race
-                // this closes.
                 _state.update {
                     it.copy(
                         state = VoiceState.PROCESSING,
@@ -526,6 +553,7 @@ class AndroidSpeechRecognizerController(
                         generation = gen,
                     )
                 }
+                Log.d("SafeDriveVoiceDebug", "[SR] onResults: state -> PROCESSING, finalTranscript='$text', gen=$gen")
                 val captured = activeSession?.takeIf { it.generation == gen }?.timings
                 val timings = if (captured != null) {
                     VoiceCaptureTimings(
@@ -538,13 +566,43 @@ class AndroidSpeechRecognizerController(
                     null
                 }
                 val emitted = _events.trySend(VoiceInputEvent(text = text, screen = screen, captureTimings = timings, generation = gen)).isSuccess
+                Log.d("SafeDriveVoiceDebug", "[SR] onResults: event emitted=$emitted")
                 if (!emitted) {
-                    // The bounded queue is genuinely full (not merely "no collector yet" — see the class
-                    // KDoc) — never leave the UI stuck showing PROCESSING for a turn that will never
-                    // actually be routed/cleared.
                     _state.update { it.copy(state = VoiceState.ERROR, errorMessage = "Không thể xử lý yêu cầu, vui lòng thử lại") }
                 }
             }
+        }
+    }
+
+    /**
+     * Promotes a non-blank partial transcript to a final transcript and emits a VoiceInputEvent.
+     * Used when the recognizer produces partials but then fails to produce a final result
+     * (ERROR_NO_MATCH, ERROR_SPEECH_TIMEOUT, or empty onResults). Must be called inside callbackLock.
+     */
+    private fun promotePartialToFinal(text: String, gen: Long, screen: String) {
+        _state.update {
+            it.copy(
+                state = VoiceState.PROCESSING,
+                finalTranscript = text,
+                partialTranscript = "",
+                generation = gen,
+            )
+        }
+        val captured = activeSession?.takeIf { it.generation == gen }?.timings
+        val timings = if (captured != null) {
+            VoiceCaptureTimings(
+                micRequestedAtMs = captured.micRequestedAtMs,
+                recognizerReadyAtMs = captured.recognizerReadyAtMs,
+                firstPartialAtMs = captured.firstPartialAtMs,
+                finalTranscriptAtMs = clock.nowMs(),
+            )
+        } else {
+            null
+        }
+        val emitted = _events.trySend(VoiceInputEvent(text = text, screen = screen, captureTimings = timings, generation = gen)).isSuccess
+        Log.d("SafeDriveVoiceDebug", "[SR] promotePartialToFinal: text='$text', gen=$gen, emitted=$emitted")
+        if (!emitted) {
+            _state.update { it.copy(state = VoiceState.ERROR, errorMessage = "Không thể xử lý yêu cầu, vui lòng thử lại") }
         }
     }
 

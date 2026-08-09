@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import android.util.Log
 import vn.edu.haui.hvs.safedrive.core.common.AppClock
 import vn.edu.haui.hvs.safedrive.core.common.GatewayError
 import vn.edu.haui.hvs.safedrive.core.common.GatewayResult
@@ -153,18 +154,20 @@ class AssistantTurnCoordinator(
         onStarted: (StartedTurn) -> Unit = {},
     ): Boolean {
         val trimmed = text.trim()
-        if (trimmed.isEmpty()) return false
+        if (trimmed.isEmpty()) {
+            Log.d("SafeDriveVoiceDebug", "[ATC] submit() -> REJECTED: text is empty")
+            return false
+        }
 
         synchronized(lock) {
-            if (conversationRepository.state.value.inFlightTurn != null) return false
+            val inFlight = conversationRepository.state.value.inFlightTurn
+            if (inFlight != null) {
+                Log.d("SafeDriveVoiceDebug", "[ATC] submit() -> REJECTED: already in-flight (reqId=${inFlight.requestId}, src=${inFlight.source})")
+                return false
+            }
 
-            // Built once, appended exactly once — either atomically with the health-blocked Failure
-            // below or atomically with starting the turn in beginTurnLocked (independent re-audit
-            // follow-up, blocker 2). Never published via its own separate update: a bare
-            // addUserMessage()-then-beginTurn()/completeFailure() sequence let a StateFlow collector on
-            // another thread observe the new bubble already appended while inFlightTurn/turnState/
-            // retryableTurn/errorMessage still reflected the *previous* turn — `synchronized(lock)` only
-            // ever serializes this class's own callers against each other, never against a collector.
+            Log.d("SafeDriveVoiceDebug", "[ATC] submit() -> ACCEPTED: text='$trimmed', source=$source, screen=$screen")
+
             val userMessage = ChatMessage(
                 id = idGenerator.next("msg_user"),
                 sender = ChatSender.USER,
@@ -172,12 +175,8 @@ class AssistantTurnCoordinator(
                 timestampMs = clock.nowMs(),
             )
 
-            // Confirmed backend capability takes priority over even trying the network call
-            // (docs/android-mvp-plan/12 W5.10). Absence of health info (never checked yet) does NOT
-            // block — only an explicit `assistant=false` does. No network request is ever attempted on
-            // this path, so `clientAttemptOf` must stay null — a retry must never claim the backend
-            // received an attempt it never saw (remediation item 1).
             if (lastHealthStatus.value?.capabilities?.assistant == false) {
+                Log.w("SafeDriveVoiceDebug", "[ATC] submit() -> health-blocked: assistant=false")
                 val generation = ++currentGeneration
                 val requestId = idGenerator.next("req")
                 val errorText = "Máy chủ hiện không hỗ trợ tính năng trợ lý."
@@ -190,11 +189,16 @@ class AssistantTurnCoordinator(
                     userMessage = errorText,
                     retryableTurn = RetryableAssistantTurn(clientAttemptOf = null, text = trimmed, screen = screen, source = source),
                 )
-                // Already resolved at construction — this turn never goes in-flight, so its
-                // "completion" is simply its own terminal value from the start.
                 val state = AssistantTurnState.Failure(requestId, generation, source, GatewayError.Unsupported, errorText)
                 invokeOnStartedSafely(onStarted, StartedTurn(requestId, generation, CompletableDeferred(state)), source)
                 return true
+            }
+
+            if (source == AssistantTurnSource.VOICE && appPreferences.value.ttsEnabled) {
+                Log.d("SafeDriveVoiceDebug", "[ATC] submit() -> speaking TTS acknowledgment")
+                ttsController.speak("Tôi đã nhận được lời nói của bạn. Đang thực thi câu lệnh.", idGenerator.next("tts_ack"))
+            } else {
+                Log.d("SafeDriveVoiceDebug", "[ATC] submit() -> TTS ack skipped: source=$source, ttsEnabled=${appPreferences.value.ttsEnabled}")
             }
 
             beginTurnLocked(
@@ -462,6 +466,7 @@ class AssistantTurnCoordinator(
                         )
                         completion.complete(state)
                         try {
+                            val ttsEnabled = appPreferences.value.ttsEnabled
                             metricsRecorder.record(
                                 AssistantTurnMetrics(
                                     requestId = requestId,
@@ -473,11 +478,19 @@ class AssistantTurnCoordinator(
                                     turnCompletedAtMs = clock.nowMs(),
                                 ),
                             )
+                            if (source == AssistantTurnSource.VOICE && ttsEnabled) {
+                                awaitTtsStarted(
+                                    requestId,
+                                    generation,
+                                    source,
+                                    before = { ttsController.speak(userFacingMessage, utteranceId = requestId) },
+                                )
+                            }
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
                             // Logged, not silently swallowed — see the Success branch's comment above.
-                            logSwallowedException("post-Failure metrics", e, requestId, generation, source)
+                            logSwallowedException("post-Failure metrics/TTS", e, requestId, generation, source)
                         }
                     }
                 }

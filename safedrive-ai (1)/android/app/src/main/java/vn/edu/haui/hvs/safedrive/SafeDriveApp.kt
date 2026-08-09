@@ -132,7 +132,10 @@ fun SafeDriveApp(container: SafeDriveContainer) {
         ttsController = container.ttsController,
         onCancelProcessing = container.assistantTurnCoordinator::cancelCurrent,
         turnOutcome = container.voiceAssistantCoordinator.turnOutcome,
-        onDismissTurnOutcome = container.voiceAssistantCoordinator::dismissTurnOutcome,
+        onDismissTurnOutcome = {
+            container.voiceAssistantCoordinator.stopContinuousMode()
+            container.voiceAssistantCoordinator.dismissTurnOutcome()
+        },
     )
 
     if (emergencyActive) {

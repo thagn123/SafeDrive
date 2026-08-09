@@ -2,9 +2,11 @@ package vn.edu.haui.hvs.safedrive.domain.usecase
 
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -13,8 +15,12 @@ import vn.edu.haui.hvs.safedrive.core.model.AssistantTurnState
 import vn.edu.haui.hvs.safedrive.core.model.EmergencyResponseType
 import vn.edu.haui.hvs.safedrive.core.model.EmergencyState
 import vn.edu.haui.hvs.safedrive.domain.repository.EmergencyRepository
+import vn.edu.haui.hvs.safedrive.domain.repository.TtsController
+import vn.edu.haui.hvs.safedrive.domain.repository.TtsState
+import vn.edu.haui.hvs.safedrive.core.model.VoiceState
 import vn.edu.haui.hvs.safedrive.voice.VoiceController
 import vn.edu.haui.hvs.safedrive.voice.VoiceInputEvent
+import android.util.Log
 
 private val ACTIVE_EMERGENCY_STATES = setOf(
     EmergencyState.CANDIDATE_DETECTED,
@@ -47,18 +53,8 @@ class VoiceAssistantCoordinator(
     private val voiceController: VoiceController,
     private val assistantTurnCoordinator: AssistantTurnCoordinator,
     private val emergencyRepository: EmergencyRepository,
+    private val ttsController: TtsController,
     private val externalScope: CoroutineScope,
-    /** Where each accepted turn's completion-awaiting consumer coroutine ([route]'s
-     * `completionScope.launch { turn.completion.await() ... }` below) actually runs. Defaults to
-     * [externalScope] — the same scope the voice-event collector itself runs on — so production
-     * behavior is completely unchanged (independent re-audit follow-up, sixth pass). Exposed as its own
-     * parameter purely so a test can pump "the collector accepting a turn" and "that turn's own
-     * completion consumer" on two independently-controlled dispatchers: this is required to
-     * deterministically force "turn B has already claimed ownership before turn A's completion consumer
-     * gets a chance to run" for a *synchronously*-resolved turn (the health-blocked path), where —
-     * unlike an in-flight network call — there is no `await`/`delay` suspension point anywhere to hang
-     * that gap on; the only remaining gap is the scheduling of the consumer coroutine's own launch.
-     */
     private val completionScope: CoroutineScope = externalScope,
 ) {
     /** Guards [start] against registering more than one collector on [VoiceController.events]
@@ -119,15 +115,58 @@ class VoiceAssistantCoordinator(
      * error. */
     val turnOutcome: StateFlow<VoiceTurnOutcome?> = _turnOutcome.asStateFlow()
 
+    // ─── Continuous conversation loop state ───
+    /** Whether continuous voice mode is active (auto-restart listening after each reply). */
+    @Volatile private var continuousMode = false
+    /** The screen the current continuous session started from. */
+    @Volatile private var lastScreen = "assistant"
+
+    private val EXIT_PHRASES = listOf(
+        "hết rồi", "kết thúc", "hết", "dừng", "dừng lại", "thôi", "tạm biệt",
+    )
+    private val EXIT_CONTAINS = listOf(
+        "hết rồi", "kết thúc", "dừng lại", "không còn", "tạm biệt",
+    )
+
+    private fun isExitPhrase(text: String): Boolean {
+        val lower = text.lowercase().trim()
+        return EXIT_PHRASES.any { lower == it } || EXIT_CONTAINS.any { lower.contains(it) }
+    }
+
     fun start() {
         if (!collectorStarted.compareAndSet(false, true)) return
+        Log.d("SafeDriveVoiceDebug", "[VAC] VoiceAssistantCoordinator started - collecting events & monitoring state")
         voiceController.events.onEach(::route).launchIn(externalScope)
+
+        // Continuous mode auto-recovery observer:
+        // If SpeechRecognizer hits an ERROR (e.g. Code 11 mic busy) or resets to IDLE while continuousMode is active,
+        // wait a moment for the audio system to reset and automatically restart listening.
+        externalScope.launch {
+            voiceController.state.collect { voiceState ->
+                if (continuousMode && (voiceState.state == VoiceState.ERROR || voiceState.state == VoiceState.IDLE)) {
+                    delay(1500)
+                    if (continuousMode && activeOwner == null) {
+                        val currentState = voiceController.state.value.state
+                        if (currentState == VoiceState.ERROR || currentState == VoiceState.IDLE) {
+                            Log.d("SafeDriveVoiceDebug", "[VAC] Continuous mode auto-recovery: restarting listening after state=$currentState")
+                            voiceController.startListening(lastScreen)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /** Clears the currently-shown outcome — called when the user dismisses the voice overlay's
      * reply/error bubble (W6.10). Never touches chat history; the message/error stays there. */
     fun dismissTurnOutcome() {
         _turnOutcome.value = null
+    }
+
+    /** Stop continuous conversation mode explicitly (e.g. user taps close/cancel). */
+    fun stopContinuousMode() {
+        Log.d("SafeDriveVoiceDebug", "[VAC] Explicitly stopping continuous mode")
+        continuousMode = false
     }
 
     /**
@@ -143,85 +182,85 @@ class VoiceAssistantCoordinator(
      * session's legitimate `PROCESSING` before that newer session's own transcript was even routed.
      */
     private suspend fun route(event: VoiceInputEvent) {
-        val activeEmergency = emergencyRepository.activeSnapshot.value
-        if (activeEmergency != null && activeEmergency.state in ACTIVE_EMERGENCY_STATES) {
-            if (EmergencyVoicePhrases.isCancelPhrase(event.text)) {
-                emergencyRepository.respond(EmergencyResponseType.CANCEL_SOS)
-            }
-            // Same ownership rule as the single-flight rejection below: an emergency-phrase event
-            // arriving while a genuinely-accepted voice turn of our own is still in flight must not
-            // steal that turn's own Processing indication — only its own eventual completion may clear
-            // it. Resolves this specific event's own generation (see resolveUnclaimedEvent's KDoc).
+        Log.d("SafeDriveVoiceDebug", "[VAC] route() received event: text='${event.text}', screen='${event.screen}', gen=${event.generation}")
+
+        // Enable continuous conversation mode for every voice event
+        continuousMode = true
+        lastScreen = event.screen
+
+        // Check exit phrase BEFORE submitting — stop the loop immediately
+        if (isExitPhrase(event.text)) {
+            Log.d("SafeDriveVoiceDebug", "[VAC] Exit phrase detected: '${event.text}' → stopping continuous mode")
+            continuousMode = false
             resolveUnclaimedEvent(event.generation)
             return
         }
 
-        // Captured synchronously from submit()'s onStarted callback — a per-turn
-        // AssistantTurnCoordinator.StartedTurn carrying its own Deferred completion, not a re-read of
-        // ConversationRepository's StateFlow (blocker 1). That StateFlow only ever holds the *latest*
-        // turnState: if this voice turn's terminal value were published and then overwritten by a
-        // later, different turn before this coroutine got scheduled to look, a `.first { matches }`
-        // collector would search the current (already-different) value forever, since StateFlow does
-        // not replay superseded history — a genuine indefinite hang, not just a slow response.
-        // `Deferred.await()` has no such hazard: it always resolves to the exact value `completion` was
-        // completed with, independent of subscription timing and independent of whatever
-        // ConversationRepository shows by the time `await()` actually runs.
+        val activeEmergency = emergencyRepository.activeSnapshot.value
+        if (activeEmergency != null && activeEmergency.state in ACTIVE_EMERGENCY_STATES) {
+            Log.d("SafeDriveVoiceDebug", "[VAC] route() -> emergency active, checking cancel phrase")
+            if (EmergencyVoicePhrases.isCancelPhrase(event.text)) {
+                emergencyRepository.respond(EmergencyResponseType.CANCEL_SOS)
+            }
+            resolveUnclaimedEvent(event.generation)
+            return
+        }
+
         var startedTurn: AssistantTurnCoordinator.StartedTurn? = null
+        Log.d("SafeDriveVoiceDebug", "[VAC] route() -> calling assistantTurnCoordinator.submit()")
         val started = assistantTurnCoordinator.submit(
             event.text,
             AssistantTurnSource.VOICE,
             event.screen,
             event.captureTimings,
         ) { turn -> startedTurn = turn }
+        Log.d("SafeDriveVoiceDebug", "[VAC] route() -> submit result: started=$started")
         if (!started) {
-            // Single-flight rejected this voice turn — resolves this specific event's own generation
-            // (see resolveUnclaimedEvent's KDoc: either clears it directly, or transfers visible
-            // ownership back to whichever turn is genuinely still in flight).
+            Log.w("SafeDriveVoiceDebug", "[VAC] route() -> submit FAILED (single-flight rejected), resolving unclaimed")
             resolveUnclaimedEvent(event.generation)
+            // Even if rejected, restart listening in continuous mode
+            if (continuousMode) {
+                externalScope.launch {
+                    delay(1500)
+                    if (continuousMode) {
+                        Log.d("SafeDriveVoiceDebug", "[VAC] Continuous mode: restarting after rejection")
+                        voiceController.startListening(lastScreen)
+                    }
+                }
+            }
             return
         }
-        val turn = requireNotNull(startedTurn) // onStarted always fires synchronously when started == true
+        val turn = requireNotNull(startedTurn)
         val owner = VoiceTurnOwner(turn.requestId, turn.generation, event.generation)
         synchronized(voiceOwnershipLock) {
-            // Unconditionally takes over ownership — this is exactly the ABA race's resolution point:
-            // if a previous turn's completion consumer has not run yet, its own later ownership check
-            // (below) will find `activeOwner` no longer references it and become a stale no-op, instead
-            // of racing this turn for the Processing indicator/outcome slot.
             activeOwner = owner
-            _turnOutcome.value = null // a new voice turn begins — never show a previous one's stale outcome
+            _turnOutcome.value = null
         }
         completionScope.launch {
-            // Resolves correctly whether this turn already completed (synchronously, e.g. the
-            // health-blocked path) or is still genuinely in flight — Deferred.await() suspends only if
-            // truly necessary, and wakes the instant `completion` is completed, with zero added delay.
             val terminal = turn.completion.await()
+            Log.d("SafeDriveVoiceDebug", "[VAC] turn completed: terminal=${terminal::class.simpleName}")
             val outcome: VoiceTurnOutcome? = when (terminal) {
                 is AssistantTurnState.Success -> VoiceTurnOutcome.Success(terminal.reply.text)
                 is AssistantTurnState.Failure -> VoiceTurnOutcome.Failure(terminal.userMessage)
-                is AssistantTurnState.Cancelled -> null // user cancelled — nothing to show
-                is AssistantTurnState.Idle, is AssistantTurnState.InFlight -> null // unreachable: never completed with these
+                is AssistantTurnState.Cancelled -> null
+                is AssistantTurnState.Idle, is AssistantTurnState.InFlight -> null
             }
             synchronized(voiceOwnershipLock) {
-                // A later voice turn may already have claimed ownership while this turn's own terminal
-                // value was resolved but this consumer coroutine had not yet been scheduled to run (the
-                // ABA race this pass closes) — in that case, this is a stale no-op: never publish this
-                // turn's outcome, never clear the current owner's Processing state, never touch
-                // `activeOwner`. The check, the outcome publish, the owner clear and the
-                // clearProcessingState() call all happen inside this one critical section so no new
-                // turn can be accepted in the gap between "check" and "act".
                 if (activeOwner === owner) {
                     _turnOutcome.value = outcome
                     activeOwner = null
-                    // Runs exactly once per accepted turn, on every path (success/failure/cancelled) —
-                    // never skipped, since `completion` is guaranteed to eventually resolve on all three
-                    // paths, and never doubled, since only the genuine current owner ever reaches here.
-                    // Names this turn's *own* voice generation explicitly (independent re-audit
-                    // follow-up, eighth pass) — if a later recognizer session has since overwritten the
-                    // visible generation (e.g. this same turn's own Processing was already transferred
-                    // away by a rejected newer event, or a newer turn's onResults ran ahead of this
-                    // turn's own resolution being processed), this call correctly becomes a no-op instead
-                    // of clearing a generation that no longer belongs to it.
                     voiceController.clearProcessingState(owner.voiceGeneration)
+                }
+            }
+
+            // ─── Continuous conversation loop: restart for ANY result ───
+            if (continuousMode) {
+                Log.d("SafeDriveVoiceDebug", "[VAC] Continuous mode: turn done (${terminal::class.simpleName}), waiting for TTS then restarting")
+                awaitTtsDone()
+                delay(1200)
+                if (continuousMode) {
+                    Log.d("SafeDriveVoiceDebug", "[VAC] Continuous mode: restarting listening on screen='$lastScreen'")
+                    voiceController.startListening(lastScreen)
                 }
             }
         }
@@ -274,5 +313,18 @@ class VoiceAssistantCoordinator(
                 voiceController.clearProcessingState(eventGeneration)
             }
         }
+    }
+
+    /** Suspends until TTS is no longer SPEAKING (max ~30s safety timeout). */
+    private suspend fun awaitTtsDone() {
+        // If TTS isn't speaking, return immediately
+        if (ttsController.state.value != TtsState.SPEAKING) return
+        Log.d("SafeDriveVoiceDebug", "[VAC] awaitTtsDone: TTS is SPEAKING, waiting...")
+        try {
+            kotlinx.coroutines.withTimeoutOrNull(30_000L) {
+                ttsController.state.first { it != TtsState.SPEAKING }
+            }
+        } catch (_: Exception) { /* timeout or cancellation — proceed anyway */ }
+        Log.d("SafeDriveVoiceDebug", "[VAC] awaitTtsDone: TTS done, state=${ttsController.state.value}")
     }
 }

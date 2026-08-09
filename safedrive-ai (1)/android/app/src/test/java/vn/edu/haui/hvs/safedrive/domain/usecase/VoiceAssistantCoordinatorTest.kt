@@ -105,6 +105,7 @@ class VoiceAssistantCoordinatorTest {
             voiceController = voiceController,
             assistantTurnCoordinator = turnCoordinator,
             emergencyRepository = emergencyRepository,
+            ttsController = FakeTtsController(),
             externalScope = voiceScope,
             completionScope = voiceCompletionScope,
         )
@@ -443,6 +444,7 @@ class VoiceAssistantCoordinatorTest {
                 voiceController = instrumentedVoiceController,
                 assistantTurnCoordinator = turnCoordinator,
                 emergencyRepository = FakeEmergencyRepository(),
+                ttsController = FakeTtsController(),
                 externalScope = realScope,
             )
 
@@ -504,6 +506,7 @@ class VoiceAssistantCoordinatorTest {
                 voiceController = instrumentedVoiceController,
                 assistantTurnCoordinator = turnCoordinator,
                 emergencyRepository = FakeEmergencyRepository(),
+                ttsController = FakeTtsController(),
                 externalScope = backgroundScope,
             )
 
