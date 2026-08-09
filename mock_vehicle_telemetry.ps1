@@ -3,6 +3,7 @@ param (
     [Nullable[float]]$Speed = $null,
     [switch]$Crash,
     [switch]$ClearCrash,
+    [string]$CrashSignals = "",
     [int]$HeartRate = -2,
     [string]$DtcCode = "",
     [switch]$DtcClear,
@@ -43,6 +44,7 @@ $AdbArgs = @("-s", $DeviceSerial, "shell", "am", "broadcast", "-a", $Action)
 if ($null -ne $Speed) { $AdbArgs += @("--ef", "speedKmh", $Speed.ToString([Globalization.CultureInfo]::InvariantCulture)) }
 if ($Crash) { $AdbArgs += @("--ez", "crashDetected", "true") }
 if ($ClearCrash) { $AdbArgs += @("--ez", "crashDetected", "false") }
+if ($CrashSignals -ne "") { $AdbArgs += @("--es", "crashSignals", $CrashSignals) }
 if ($HeartRate -ne -2) { $AdbArgs += @("--ei", "heartRate", $HeartRate.ToString()) }
 if ($DtcCode -ne "") {
     $AdbArgs += @("--es", "dtcCode", $DtcCode, "--ez", "dtcClear", $DtcClear.IsPresent.ToString().ToLowerInvariant())

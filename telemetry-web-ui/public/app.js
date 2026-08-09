@@ -87,11 +87,22 @@ crashBtn.addEventListener('click', () => {
     crashBtn.style.transform = 'scale(0.9)';
     setTimeout(() => { crashBtn.style.transform = 'none'; }, 150);
     
-    // Update speed slider to 0 visually
-    speedSlider.value = 0;
-    speedValue.textContent = '0 km/h';
-    
-    sendTelemetry({ crash: true, speed: 0 });
+    // Collect checked signals
+    const checkboxes = document.querySelectorAll('.crash-panel input[type="checkbox"]:checked');
+    const signals = Array.from(checkboxes).map(cb => cb.value).join(',');
+    if (!signals) {
+        showToast('Hãy chọn ít nhất một tín hiệu va chạm.', 'error');
+        return;
+    }
+
+    // If speed drop is checked, also visually update speed to 0
+    if (signals.includes('VHAL_SPEED_DROP')) {
+        speedSlider.value = 0;
+        speedValue.textContent = '0 km/h';
+        sendTelemetry({ crashSignals: signals, speed: 0 });
+    } else {
+        sendTelemetry({ crashSignals: signals });
+    }
 });
 
 // Exposed globally for onclick in HTML

@@ -350,6 +350,14 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
             crashEvidenceAdapter.decisions.collect { decision ->
                 if (!decision.crashDetected) return@collect
                 lastCrashEvidenceDecision = decision
+                // CrashEvidenceFusion has already rejected weak/noisy combinations before a
+                // decision reaches this collector. Start the full-screen emergency flow locally
+                // now, even in REMOTE mode, so occupant protection never waits on connectivity or
+                // an LLM. The canonical crash state is still pushed to the backend immediately
+                // below for remote memory, narration and cross-device continuity.
+                emergencyRepository.startTrustedLocalCrash(
+                    decision.signals.map { it.source.toEvidenceItem(it.detectedAtMs) },
+                )
                 val currentState = vehicleDataSource.vehicleState.value
                 val currentSignals = vehicleDataSource.driverSupportSignals.value
                 vehicleDataSource.updateManual(

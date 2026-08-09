@@ -36,6 +36,7 @@ class ModeAwareEmergencyRepository(
 ) : EmergencyRepository, RemoteEmergencySnapshotSink {
 
     private val remoteSnapshot = MutableStateFlow<EmergencySnapshot?>(null)
+    private val trustedLocalCrashActive = MutableStateFlow(false)
     private val _activeSnapshot = MutableStateFlow<EmergencySnapshot?>(null)
     override val activeSnapshot: StateFlow<EmergencySnapshot?> = _activeSnapshot.asStateFlow()
 
@@ -44,10 +45,33 @@ class ModeAwareEmergencyRepository(
 
     init {
         externalScope.launch {
-            combine(localRepository.activeSnapshot, remoteSnapshot, appPreferences) { local, remote, preferences ->
-                if (preferences.backendMode == BackendMode.DEMO) local else remote
+            combine(
+                localRepository.activeSnapshot,
+                remoteSnapshot,
+                appPreferences,
+                trustedLocalCrashActive,
+            ) { local, remote, preferences, useTrustedLocal ->
+                when {
+                    preferences.backendMode == BackendMode.DEMO -> local
+                    useTrustedLocal -> local?.withRemoteAdvisory(remote)
+                    else -> remote
+                }
             }.collect { _activeSnapshot.value = it }
         }
+    }
+
+    /**
+     * Starts an emergency from a crash decision that has already passed the deterministic on-device
+     * [vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceFusion] policy. This is intentionally
+     * separate from [startCandidate]: Remote mode still refuses arbitrary/manual candidates, while a
+     * trusted VHAL/airbag/IMU fusion result can open the safety UI immediately without waiting for a
+     * network round trip. The backend continues receiving the canonical crash state in parallel.
+     */
+    suspend fun startTrustedLocalCrash(evidence: List<EvidenceItem>): EmergencySnapshot {
+        trustedLocalCrashActive.value = true
+        val snapshot = localRepository.startCandidate(evidence)
+        _activeSnapshot.value = snapshot.withRemoteAdvisory(remoteSnapshot.value)
+        return snapshot
     }
 
     override fun publishRemoteSnapshot(snapshot: EmergencySnapshot?) {
@@ -71,8 +95,9 @@ class ModeAwareEmergencyRepository(
         }
 
     override suspend fun tick() {
-        if (appPreferences.value.backendMode == BackendMode.DEMO) {
+        if (appPreferences.value.backendMode == BackendMode.DEMO || trustedLocalCrashActive.value) {
             localRepository.tick()
+            _activeSnapshot.value = localRepository.activeSnapshot.value?.withRemoteAdvisory(remoteSnapshot.value)
             return
         }
 
@@ -98,8 +123,10 @@ class ModeAwareEmergencyRepository(
     }
 
     override suspend fun respond(response: EmergencyResponseType): EmergencySnapshot? {
-        if (appPreferences.value.backendMode == BackendMode.DEMO) {
-            return localRepository.respond(response)
+        if (appPreferences.value.backendMode == BackendMode.DEMO || trustedLocalCrashActive.value) {
+            return localRepository.respond(response).also {
+                _activeSnapshot.value = it?.withRemoteAdvisory(remoteSnapshot.value)
+            }
         }
         val current = remoteSnapshot.value ?: return null
         val session = sessionCoordinator.currentSession()
@@ -122,8 +149,10 @@ class ModeAwareEmergencyRepository(
     }
 
     override suspend fun refresh(): EmergencySnapshot? {
-        if (appPreferences.value.backendMode == BackendMode.DEMO) {
-            return localRepository.refresh()
+        if (appPreferences.value.backendMode == BackendMode.DEMO || trustedLocalCrashActive.value) {
+            return localRepository.refresh().also {
+                _activeSnapshot.value = it?.withRemoteAdvisory(remoteSnapshot.value)
+            }
         }
         val current = remoteSnapshot.value ?: return null
         val session = sessionCoordinator.currentSession()
@@ -136,8 +165,12 @@ class ModeAwareEmergencyRepository(
     }
 
     override suspend fun clear() {
-        if (appPreferences.value.backendMode == BackendMode.DEMO) {
+        if (appPreferences.value.backendMode == BackendMode.DEMO || trustedLocalCrashActive.value) {
             localRepository.clear()
+            trustedLocalCrashActive.value = false
+            if (appPreferences.value.backendMode == BackendMode.REMOTE) {
+                setRemoteSnapshot(null)
+            }
         } else {
             setRemoteSnapshot(null)
         }
@@ -148,7 +181,17 @@ class ModeAwareEmergencyRepository(
         // The combine collector also handles mode changes, but a direct publish must be immediately
         // observable so an incoming CRITICAL backend state cannot wait for a scheduling turn.
         if (appPreferences.value.backendMode == BackendMode.REMOTE) {
-            _activeSnapshot.value = snapshot
+            _activeSnapshot.value = if (trustedLocalCrashActive.value) {
+                // Keep the on-device Fusion state/deadline authoritative for immediate occupant
+                // protection, but let Vertex AI's bounded backend second opinion enrich the screen
+                // when it arrives. It can explain evidence; it cannot cancel, delay or advance SOS.
+                localRepository.activeSnapshot.value?.withRemoteAdvisory(snapshot)
+            } else {
+                snapshot
+            }
         }
     }
+
+    private fun EmergencySnapshot.withRemoteAdvisory(remote: EmergencySnapshot?): EmergencySnapshot =
+        copy(reasoningSummary = remote?.reasoningSummary ?: reasoningSummary)
 }

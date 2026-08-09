@@ -21,6 +21,7 @@ data class AdbTelemetryCommand(
     val clearHeartRate: Boolean = false,
     val dtcCode: String? = null,
     val clearDtc: Boolean = false,
+    val crashSignals: List<CrashEvidenceSource> = emptyList(),
 )
 
 /**
@@ -68,9 +69,8 @@ class AdbTelemetryController(
             }
         }
 
-        if (command.crashDetected == true && !vehicleState.crashDetected) {
-            crashEvidenceAdapter.injectSignal(CrashEvidenceSource.VHAL_IMPACT)
-            crashEvidenceAdapter.injectSignal(CrashEvidenceSource.VHAL_AIRBAG)
+        command.crashSignals.forEach { source ->
+            crashEvidenceAdapter.injectSignal(source)
         }
 
         vehicleDataSource.updateManual(
@@ -112,6 +112,10 @@ class AdbTelemetryReceiver(
         if (intent?.action != ACTION_MOCK_TELEMETRY) return
         val heartRatePresent = intent.hasExtra(EXTRA_HEART_RATE)
         val rawHeartRate = intent.getIntExtra(EXTRA_HEART_RATE, -1)
+        val rawSignals = intent.getStringExtra(EXTRA_CRASH_SIGNALS) ?: ""
+        val signals = rawSignals.split(",").mapNotNull { name ->
+            runCatching { CrashEvidenceSource.valueOf(name.trim()) }.getOrNull()
+        }
         val accepted = controller.submit(
             AdbTelemetryCommand(
                 speedKmh = intent.takeIf { it.hasExtra(EXTRA_SPEED) }
@@ -122,6 +126,7 @@ class AdbTelemetryReceiver(
                 clearHeartRate = heartRatePresent && rawHeartRate < 0,
                 dtcCode = intent.getStringExtra(EXTRA_DTC_CODE),
                 clearDtc = intent.getBooleanExtra(EXTRA_DTC_CLEAR, false),
+                crashSignals = signals,
             ),
         )
         Log.i(LOG_TAG, if (accepted) "telemetry_applied" else "telemetry_rejected_by_policy")
@@ -131,6 +136,7 @@ class AdbTelemetryReceiver(
         const val ACTION_MOCK_TELEMETRY = "vn.edu.haui.hvs.safedrive.action.MOCK_TELEMETRY"
         const val EXTRA_SPEED = "speedKmh"
         const val EXTRA_CRASH = "crashDetected"
+        const val EXTRA_CRASH_SIGNALS = "crashSignals"
         const val EXTRA_HEART_RATE = "heartRate"
         const val EXTRA_DTC_CODE = "dtcCode"
         const val EXTRA_DTC_CLEAR = "dtcClear"

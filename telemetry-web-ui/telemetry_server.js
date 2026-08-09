@@ -35,6 +35,18 @@ function validateTelemetry(body) {
         if (typeof body.crash !== 'boolean') throw new Error('crash must be boolean');
         command.crash = body.crash;
     }
+    if (body.crashSignals !== undefined) {
+        if (typeof body.crashSignals !== 'string') throw new Error('crashSignals must be a string');
+        const allowedCrashSignals = new Set([
+            'VHAL_IMPACT', 'VHAL_AIRBAG', 'DEVICE_IMU',
+            'VHAL_SPEED_DROP', 'HIGH_SPEED', 'CRITICAL_SENSOR_FAULT',
+        ]);
+        const crashSignals = body.crashSignals.split(',').map(value => value.trim()).filter(Boolean);
+        if (crashSignals.some(value => !allowedCrashSignals.has(value))) {
+            throw new Error('crashSignals contains an unsupported signal');
+        }
+        command.crashSignals = crashSignals.join(',');
+    }
     if (body.heartRate !== undefined && body.heartRate !== null) {
         if (!Number.isInteger(body.heartRate) || (body.heartRate !== -1 && (body.heartRate < 20 || body.heartRate > 250))) {
             throw new Error('heartRate must be -1 or an integer from 20 to 250');
@@ -69,6 +81,7 @@ app.post('/api/telemetry', async (req, res) => {
         if (command.speed !== undefined) args.push('-Speed', String(command.speed));
         if (command.crash === true) args.push('-Crash');
         if (command.crash === false) args.push('-ClearCrash');
+        if (command.crashSignals !== undefined && command.crashSignals !== '') args.push('-CrashSignals', command.crashSignals);
         if (command.heartRate !== undefined) args.push('-HeartRate', String(command.heartRate));
         if (command.dtcCode) {
             args.push('-DtcCode', command.dtcCode);

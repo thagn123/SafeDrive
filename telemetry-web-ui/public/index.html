@@ -64,14 +64,22 @@
             <!-- Crash Injection -->
             <div class="glass-card control-panel crash-panel">
                 <div class="panel-header">
-                    <h2>Emergency Injection</h2>
+                    <h2>Crash Evidence Fusion</h2>
+                </div>
+                <div class="checkbox-grid">
+                    <label class="checkbox-item"><input type="checkbox" value="VHAL_IMPACT" checked> VHAL_IMPACT (Cảm biến va chạm)</label>
+                    <label class="checkbox-item"><input type="checkbox" value="VHAL_AIRBAG"> VHAL_AIRBAG (Túi khí bung)</label>
+                    <label class="checkbox-item"><input type="checkbox" value="DEVICE_IMU"> DEVICE_IMU (Gia tốc lớn)</label>
+                    <label class="checkbox-item"><input type="checkbox" value="VHAL_SPEED_DROP"> VHAL_SPEED_DROP (Giảm tốc nhanh)</label>
+                    <label class="checkbox-item"><input type="checkbox" value="HIGH_SPEED"> HIGH_SPEED (Tốc độ cao)</label>
+                    <label class="checkbox-item"><input type="checkbox" value="CRITICAL_SENSOR_FAULT"> CRITICAL_SENSOR_FAULT (Hỏng cảm biến)</label>
                 </div>
                 <div class="crash-container">
                     <button id="crash-btn" class="btn danger-btn pulse-danger">
-                        <span>TRIGGER CRASH</span>
+                        <span>GỬI TÍN HIỆU</span>
                     </button>
                 </div>
-                <p class="help-text">Instantly sets speed to 0 and triggers crash flag.</p>
+                <p class="help-text">IMPACT/AIRBAG tự kích hoạt SOS; IMU cần đi cùng SPEED_DROP. Tín hiệu bối cảnh đơn lẻ sẽ bị từ chối.</p>
             </div>
 
             <!-- DTC Injection -->

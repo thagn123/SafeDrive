@@ -54,6 +54,10 @@ class AdbTelemetryControllerTest {
             AdbTelemetryCommand(
                 speedKmh = 999f,
                 crashDetected = true,
+                crashSignals = listOf(
+                    CrashEvidenceSource.VHAL_IMPACT,
+                    CrashEvidenceSource.VHAL_AIRBAG,
+                ),
                 heartRateBpm = 999,
                 dtcCode = "CRITICAL_SENSOR_FAULT",
             ),
@@ -73,16 +77,12 @@ class AdbTelemetryControllerTest {
     }
 
     @Test
-    fun `repeated crash command does not inject duplicate crash evidence`() {
+    fun `legacy crash flag does not fabricate physical crash evidence`() {
         val controller = controller(initiallyEnabled = true)
 
         controller.submit(AdbTelemetryCommand(crashDetected = true))
-        controller.submit(AdbTelemetryCommand(crashDetected = true))
 
-        assertThat(injectedCrashSignals).containsExactly(
-            CrashEvidenceSource.VHAL_IMPACT,
-            CrashEvidenceSource.VHAL_AIRBAG,
-        ).inOrder()
+        assertThat(injectedCrashSignals).isEmpty()
     }
 
     @Test

@@ -18,6 +18,8 @@ import vn.edu.haui.hvs.safedrive.core.model.BackendMode
 import vn.edu.haui.hvs.safedrive.core.model.EmergencyResponseRequest
 import vn.edu.haui.hvs.safedrive.core.model.EmergencySnapshot
 import vn.edu.haui.hvs.safedrive.core.model.EmergencyState
+import vn.edu.haui.hvs.safedrive.core.model.EmergencyResponseType
+import vn.edu.haui.hvs.safedrive.core.model.EvidenceItem
 import vn.edu.haui.hvs.safedrive.core.model.EventAccepted
 import vn.edu.haui.hvs.safedrive.core.model.HealthStatus
 import vn.edu.haui.hvs.safedrive.core.model.SafeDriveEvent
@@ -33,6 +35,57 @@ import vn.edu.haui.hvs.safedrive.domain.repository.SafeDriveGateway
 import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
 
 class ModeAwareEmergencyRepositoryTest {
+
+    @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun `trusted fused crash opens local emergency immediately in remote mode`() = runTest {
+        val clock = FakeClock(initialMs = 1_000L)
+        val preferences = MutableStateFlow(AppPreferences(backendMode = BackendMode.REMOTE, baseUrl = "https://demo/"))
+        val gateway = EmergencyGateway(clock)
+        val localRepository = FakeEmergencyRepository()
+        val coordinator = SessionCoordinator(
+            gatewayProvider = object : GatewayProvider {
+                override fun current(): SafeDriveGateway = gateway
+                override fun forPreferences(prefs: AppPreferences): SafeDriveGateway = gateway
+            },
+            appPreferences = preferences,
+            idGenerator = UuidIdGenerator(),
+            clock = clock,
+            appVersion = "test",
+        )
+        val repository = ModeAwareEmergencyRepository(
+            localRepository = localRepository,
+            sessionCoordinator = coordinator,
+            appPreferences = preferences,
+            clock = clock,
+            idGenerator = UuidIdGenerator(),
+            externalScope = backgroundScope,
+        )
+        val evidence = listOf(EvidenceItem("vhal_impact", "VHAL impact", clock.nowMs()))
+
+        repository.startTrustedLocalCrash(evidence)
+
+        assertThat(repository.activeSnapshot.value?.state).isEqualTo(EmergencyState.VERIFYING_EVIDENCE)
+        assertThat(repository.activeSnapshot.value?.evidence).isEqualTo(evidence)
+
+        repository.publishRemoteSnapshot(
+            EmergencySnapshot(
+                emergencyId = "backend_emergency",
+                state = EmergencyState.FINAL_COUNTDOWN,
+                deadlineMs = 99_000L,
+                evidence = emptyList(),
+                reasoningSummary = "AI confirms the grounded collision context.",
+            ),
+        )
+        assertThat(repository.activeSnapshot.value?.emergencyId).isEqualTo("emg_fake")
+        assertThat(repository.activeSnapshot.value?.state).isEqualTo(EmergencyState.VERIFYING_EVIDENCE)
+        assertThat(repository.activeSnapshot.value?.reasoningSummary)
+            .isEqualTo("AI confirms the grounded collision context.")
+
+        repository.respond(EmergencyResponseType.USER_OK)
+        assertThat(localRepository.lastResponse).isEqualTo(EmergencyResponseType.USER_OK)
+        assertThat(repository.activeSnapshot.value?.state).isEqualTo(EmergencyState.CANCELLED)
+    }
 
     @Test
     @OptIn(ExperimentalCoroutinesApi::class)
