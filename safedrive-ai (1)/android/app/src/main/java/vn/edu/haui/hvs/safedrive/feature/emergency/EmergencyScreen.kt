@@ -1,13 +1,24 @@
 package vn.edu.haui.hvs.safedrive.feature.emergency
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -239,6 +250,12 @@ private fun EvidenceCard(active: EmergencyUiState.Active, onTriggerVoiceCancel: 
             )
         }
         if (active.developerMode) {
+            // Technical signal-state view — only shown once Developer Mode is switched on
+            // (Settings), so the plain-language evidence list above stays uncluttered by default.
+            SignalStatePanel(
+                evidenceCodes = active.evidence.map { it.code }.toSet(),
+                modifier = Modifier.padding(top = 12.dp),
+            )
             Text(
                 "Reason codes: ${active.evidence.joinToString(", ") { it.code }}",
                 style = MaterialTheme.typography.labelSmall,
@@ -249,5 +266,75 @@ private fun EvidenceCard(active: EmergencyUiState.Active, onTriggerVoiceCancel: 
         Button(onClick = onTriggerVoiceCancel, modifier = Modifier.padding(top = 12.dp)) {
             Text("Nói \"Tôi ổn\" / \"Hủy SOS\"")
         }
+    }
+}
+
+private data class SignalIndicator(val code: String, val label: String)
+
+/** Every real VHAL/IMU crash-evidence code SafeDriveContainer's `toEvidenceItem` can emit
+ * (SafeDriveContainer.kt) — kept as plain strings here rather than importing the domain
+ * `CrashEvidenceSource` enum, so this screen never needs to know about the vehicle-layer type. */
+private val KNOWN_CRASH_SIGNALS = listOf(
+    SignalIndicator("vhal_impact", "Va chạm VHAL"),
+    SignalIndicator("vhal_airbag", "Túi khí"),
+    SignalIndicator("device_imu", "Gia tốc điện thoại"),
+    SignalIndicator("vhal_speed_drop", "Giảm tốc đột ngột"),
+    SignalIndicator("high_speed_context", "Tốc độ cao"),
+    SignalIndicator("perimeter_sensor_fault", "Cảm biến quanh xe"),
+)
+
+/**
+ * Visual state of every known real crash-evidence signal, not just the ones present in
+ * [evidenceCodes] — an all-dark panel is itself informative: it means this SOS was triggered by a
+ * manual Simulator toggle rather than a real fused vehicle/phone signal (the two evidence
+ * vocabularies never overlap — see SafeDriveContainer's evidence-rule collector). Active chips
+ * pulse to draw the eye, matching how a real diagnostic dashboard highlights a live alarm.
+ */
+@Composable
+private fun SignalStatePanel(evidenceCodes: Set<String>, modifier: Modifier = Modifier) {
+    val colors = LocalSafeDriveStatusColors.current
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "Trạng thái tín hiệu va chạm:",
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.onSurfaceMuted,
+        )
+        KNOWN_CRASH_SIGNALS.chunked(3).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { indicator ->
+                    SignalChip(indicator.label, active = indicator.code in evidenceCodes)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SignalChip(label: String, active: Boolean) {
+    val dotColor = if (active) {
+        val infiniteTransition = rememberInfiniteTransition(label = "signalPulse")
+        val pulseAlpha by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.35f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(700, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "signalPulseAlpha",
+        )
+        Color(0xFFF87171).copy(alpha = pulseAlpha)
+    } else {
+        Color(0xFF334155)
+    }
+    val textColor = if (active) Color.White else Color(0xFF64748B)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .background(Color(0xFF0B1622), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    ) {
+        Box(modifier = Modifier.size(8.dp).background(dotColor, CircleShape))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = textColor)
     }
 }

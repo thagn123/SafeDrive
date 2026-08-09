@@ -38,6 +38,8 @@ import vn.edu.haui.hvs.safedrive.data.remote.ModeAwareEmergencyRepository
 import vn.edu.haui.hvs.safedrive.data.remote.RemoteSafeDriveGateway
 import vn.edu.haui.hvs.safedrive.data.remote.SafeDriveApi
 import vn.edu.haui.hvs.safedrive.domain.repository.AppPreferences
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceDecision
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSource
 import vn.edu.haui.hvs.safedrive.domain.repository.EmergencyRepository
 import vn.edu.haui.hvs.safedrive.domain.repository.GatewayProvider
 import vn.edu.haui.hvs.safedrive.domain.repository.PreferencesRepository
@@ -204,6 +206,29 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
         _lastHealthStatus.value = status
     }
 
+    /** The most recent real, VHAL/IMU-fused crash decision not yet consumed into an
+     * [EvidenceItem] list, so the Evidence-rule collector below can describe *which* concrete
+     * signals fired (impact, airbag, phone g-force, sudden speed drop) instead of the generic
+     * "crashDetected=true" text used for a manually-toggled Simulator preset. Read-and-cleared
+     * exactly once per real decision (set to `null` immediately after being consumed) so a stale
+     * decision can never be misattributed to a later, unrelated manual toggle. */
+    private var lastCrashEvidenceDecision: CrashEvidenceDecision? = null
+
+    private fun CrashEvidenceSource.toEvidenceItem(atMs: Long): EvidenceItem = when (this) {
+        CrashEvidenceSource.VHAL_IMPACT ->
+            EvidenceItem("vhal_impact", "Cảm biến va chạm của xe (VHAL) ghi nhận tác động trực tiếp", atMs)
+        CrashEvidenceSource.VHAL_AIRBAG ->
+            EvidenceItem("vhal_airbag", "Túi khí đã bung", atMs)
+        CrashEvidenceSource.DEVICE_IMU ->
+            EvidenceItem("device_imu", "Cảm biến gia tốc điện thoại ghi nhận lực va chạm mạnh", atMs)
+        CrashEvidenceSource.VHAL_SPEED_DROP ->
+            EvidenceItem("vhal_speed_drop", "Tốc độ xe giảm đột ngột trong tích tắc", atMs)
+        CrashEvidenceSource.HIGH_SPEED ->
+            EvidenceItem("high_speed_context", "Xe đang chạy tốc độ cao khi sự kiện xảy ra", atMs)
+        CrashEvidenceSource.CRITICAL_SENSOR_FAULT ->
+            EvidenceItem("perimeter_sensor_fault", "Nhiều cảm biến quanh xe báo lỗi cùng lúc", atMs)
+    }
+
     /**
      * Single application-scoped subscription to [observeCockpitUseCase]. Cockpit, Assistant and
      * Diagnostics all read from this same hot [StateFlow] instead of each independently
@@ -290,6 +315,7 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
         applicationScope.launch {
             crashEvidenceAdapter.decisions.collect { decision ->
                 if (!decision.crashDetected) return@collect
+                lastCrashEvidenceDecision = decision
                 val currentState = vehicleDataSource.vehicleState.value
                 val currentSignals = vehicleDataSource.driverSupportSignals.value
                 vehicleDataSource.updateManual(
@@ -343,16 +369,30 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
                 if (active != null && active.state != EmergencyState.IDLE && active.state != EmergencyState.CANCELLED) {
                     return@collect
                 }
-                val evidence = buildList {
-                    add(EvidenceItem("crash_detected", "Phát hiện va chạm gia tốc lớn", clock.nowMs()))
-                    if (state.passengerResponse == PassengerResponse.NO_RESPONSE) {
-                        add(EvidenceItem("passenger_no_response", "Không nhận được phản hồi", clock.nowMs()))
-                    }
-                    if (state.driverSeatOccupied == true) {
-                        add(EvidenceItem("seat_occupied", "Cảm biến ghế lái ghi nhận có người", clock.nowMs()))
+                // A real VHAL/IMU-fused decision already enforced its own evidence-sufficiency rule
+                // (CrashEvidenceFusion: impact/airbag alone, or two independent corroborators) before
+                // ever reaching here, so it is described directly and exactly once, instead of being
+                // re-judged against the generic manual-toggle rule below (which would incorrectly
+                // suppress a genuine single-strong-signal detection, e.g. VHAL_IMPACT alone, whenever
+                // passengerResponse hasn't flipped to NO_RESPONSE yet).
+                val fusedDecision = lastCrashEvidenceDecision
+                lastCrashEvidenceDecision = null
+                val evidence = if (fusedDecision != null) {
+                    fusedDecision.signals.map { it.source.toEvidenceItem(it.detectedAtMs) }
+                } else {
+                    buildList {
+                        add(EvidenceItem("crash_detected", "Phát hiện va chạm gia tốc lớn", clock.nowMs()))
+                        if (state.passengerResponse == PassengerResponse.NO_RESPONSE) {
+                            add(EvidenceItem("passenger_no_response", "Không nhận được phản hồi", clock.nowMs()))
+                        }
+                        if (state.driverSeatOccupied == true) {
+                            add(EvidenceItem("seat_occupied", "Cảm biến ghế lái ghi nhận có người", clock.nowMs()))
+                        }
                     }
                 }
-                if (evidence.size < 2) return@collect // single signal is insufficient to auto-trigger
+                if (fusedDecision == null && evidence.size < 2) {
+                    return@collect // manual toggle: a single signal is insufficient to auto-trigger
+                }
                 emergencyRepository.startCandidate(evidence)
             }
         }

@@ -108,7 +108,7 @@ class VoiceAssistantCoordinatorTest {
             ttsController = FakeTtsController(),
             externalScope = voiceScope,
             completionScope = voiceCompletionScope,
-        )
+        ).apply { forceDisableContinuousModeForTest = true }
         if (autoStart) coordinator.start()
         return Scenario(coordinator, voiceController, conversationRepository, emergencyRepository, metricsRecorder, turnCoordinator)
     }
@@ -446,7 +446,7 @@ class VoiceAssistantCoordinatorTest {
                 emergencyRepository = FakeEmergencyRepository(),
                 ttsController = FakeTtsController(),
                 externalScope = realScope,
-            )
+            ).apply { forceDisableContinuousModeForTest = true }
 
             val threadCount = 32
             val barrier = CyclicBarrier(threadCount)
@@ -508,7 +508,7 @@ class VoiceAssistantCoordinatorTest {
                 emergencyRepository = FakeEmergencyRepository(),
                 ttsController = FakeTtsController(),
                 externalScope = backgroundScope,
-            )
+            ).apply { forceDisableContinuousModeForTest = true }
 
             coordinator.start()
             coordinator.start()

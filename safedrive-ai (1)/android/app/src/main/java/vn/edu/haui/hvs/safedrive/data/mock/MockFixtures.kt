@@ -35,6 +35,15 @@ class MockFixtures(private val clock: AppClock) {
         updatedAtMs = clock.nowMs(),
     )
 
+    fun dtcCriticalCrash(): Dtc = Dtc(
+        code = "CRITICAL_SENSOR_FAULT",
+        title = "Hệ thống cảm biến và túi khí bị lỗi nghiêm trọng",
+        description = "Mất kết nối nhiều cảm biến quanh xe và hệ thống túi khí. Khả năng cao do va chạm mạnh làm đứt cáp tín hiệu.",
+        severity = Severity.CRITICAL,
+        recommendation = "Hệ thống đang tự động kích hoạt SOS và gọi cứu hộ.",
+        updatedAtMs = clock.nowMs(),
+    )
+
     private fun signals(
         vehicleState: VehicleState,
         steeringSignalAvailable: Boolean,
@@ -132,8 +141,8 @@ class MockFixtures(private val clock: AppClock) {
             activeDtcs = listOf(dtcOverheat()),
         )
         val crashState = defaultVehicleState().copy(
-            speedKmh = 0f,
-            activeDtcs = emptyList(),
+            speedKmh = 85f, // Xe đang chạy tốc độ cao
+            activeDtcs = listOf(dtcCriticalCrash()), // Kèm theo lỗi cảm biến nghiêm trọng
             crashDetected = true,
             passengerResponse = PassengerResponse.NO_RESPONSE,
         )
@@ -219,11 +228,11 @@ class MockFixtures(private val clock: AppClock) {
             preset(
                 id = "crash",
                 title = "8. Va chạm giả lập",
-                subtitle = "Tình huống khẩn cấp (CRITICAL)",
-                description = "Phát hiện va chạm gia tốc lớn, người trong xe KHÔNG PHẢN HỒI. Đếm ngược SOS 10s.",
-                iconKey = "siren",
+                subtitle = "Crash Detected (SOS)",
+                description = "Giả lập tín hiệu đâm va ở tốc độ cao (85km/h), cảm biến hỏng nặng, tài xế không phản hồi. Đang kích hoạt SOS.",
+                iconKey = "alert_octagon",
                 vehicleState = crashState,
-                signals = signals(crashState, true, true, null, null, false),
+                signals = signals(crashState, true, true, now - 1000, 115, false),
             ),
             preset(
                 id = "misfire",

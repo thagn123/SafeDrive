@@ -17,6 +17,7 @@ import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceDecision
 import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceFusion
 import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSignal
 import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSource
+import vn.edu.haui.hvs.safedrive.domain.repository.PerimeterSensorFaultTracker
 import kotlin.math.sqrt
 
 private const val EVIDENCE_WINDOW_MS = 2_000L
@@ -34,6 +35,7 @@ class AndroidCrashEvidenceAdapter(
 
     private val sensorManager = context.getSystemService(SensorManager::class.java)
     private val fusion = CrashEvidenceFusion(evidenceWindowMs = EVIDENCE_WINDOW_MS)
+    private val perimeterFaults = PerimeterSensorFaultTracker(windowMs = EVIDENCE_WINDOW_MS)
     private var car: Car? = null
     private var properties: CarPropertyManager? = null
     private var lastSpeedMps: Float? = null
@@ -52,6 +54,7 @@ class AndroidCrashEvidenceAdapter(
             registerIfAvailable(manager, VehiclePropertyIds.IMPACT_DETECTED)
             registerIfAvailable(manager, VehiclePropertyIds.SEAT_AIRBAGS_DEPLOYED)
             registerIfAvailable(manager, VehiclePropertyIds.PERF_VEHICLE_SPEED)
+            registerIfAvailable(manager, VehiclePropertyIds.ULTRASONICS_SENSOR_MEASURED_DISTANCE)
         }
     }
 
@@ -90,6 +93,12 @@ class AndroidCrashEvidenceAdapter(
                 val now = clock.nowMs()
                 val previous = lastSpeedMps
                 val previousAt = lastSpeedAtMs
+                
+                // Track high speed
+                if (speed >= 22.2f) { // ~80 km/h
+                    record(CrashEvidenceSource.HIGH_SPEED, confidence = 0.8f, timestampMs = now)
+                }
+                
                 if (previous != null && previousAt != null && now - previousAt <= EVIDENCE_WINDOW_MS &&
                     previous - speed >= SPEED_DROP_MPS
                 ) {
@@ -98,10 +107,25 @@ class AndroidCrashEvidenceAdapter(
                 lastSpeedMps = speed
                 lastSpeedAtMs = now
             }
+            VehiclePropertyIds.ULTRASONICS_SENSOR_MEASURED_DISTANCE -> {
+                val now = clock.nowMs()
+                val severeFault = perimeterFaults.onSensorStatus(
+                    areaId = value.areaId,
+                    isError = value.propertyStatus == CarPropertyValue.STATUS_ERROR,
+                    nowMs = now,
+                )
+                if (severeFault) {
+                    record(CrashEvidenceSource.CRITICAL_SENSOR_FAULT, confidence = 0.6f, timestampMs = now)
+                }
+            }
         }
     }
 
     override fun onErrorEvent(propertyId: Int, areaId: Int) = Unit
+
+    override fun injectSignal(source: CrashEvidenceSource, confidence: Float) {
+        record(source, confidence)
+    }
 
     private fun record(
         source: CrashEvidenceSource,

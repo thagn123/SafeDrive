@@ -116,6 +116,7 @@ class VoiceAssistantCoordinator(
     val turnOutcome: StateFlow<VoiceTurnOutcome?> = _turnOutcome.asStateFlow()
 
     // ─── Continuous conversation loop state ───
+    @Volatile var forceDisableContinuousModeForTest = false
     /** Whether continuous voice mode is active (auto-restart listening after each reply). */
     @Volatile private var continuousMode = false
     /** The screen the current continuous session started from. */
@@ -184,8 +185,9 @@ class VoiceAssistantCoordinator(
     private suspend fun route(event: VoiceInputEvent) {
         Log.d("SafeDriveVoiceDebug", "[VAC] route() received event: text='${event.text}', screen='${event.screen}', gen=${event.generation}")
 
-        // Enable continuous conversation mode for every voice event
-        continuousMode = true
+        // Enable continuous conversation mode for every production voice event. Assign rather than
+        // only setting true so the deterministic test override also clears any queued/recovered loop.
+        continuousMode = !forceDisableContinuousModeForTest
         lastScreen = event.screen
 
         // Check exit phrase BEFORE submitting — stop the loop immediately

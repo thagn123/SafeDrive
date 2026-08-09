@@ -15,6 +15,18 @@ class CrashEvidenceFusionTest {
     }
 
     @Test
+    fun `high speed plus hard braking is not enough to declare a crash`() {
+        fusion.record(signal(CrashEvidenceSource.HIGH_SPEED, 1_000))
+        assertThat(fusion.record(signal(CrashEvidenceSource.VHAL_SPEED_DROP, 1_500))).isNull()
+    }
+
+    @Test
+    fun `sensor fault plus speed drop is not enough to declare a crash`() {
+        fusion.record(signal(CrashEvidenceSource.CRITICAL_SENSOR_FAULT, 1_000))
+        assertThat(fusion.record(signal(CrashEvidenceSource.VHAL_SPEED_DROP, 1_500))).isNull()
+    }
+
+    @Test
     fun `high g plus sudden speed drop declares a crash`() {
         fusion.record(signal(CrashEvidenceSource.DEVICE_IMU, 1_000))
         val decision = fusion.record(signal(CrashEvidenceSource.VHAL_SPEED_DROP, 1_500))
@@ -45,6 +57,22 @@ class CrashEvidenceFusionTest {
         assertThat(fusion.record(signal(CrashEvidenceSource.VHAL_IMPACT, 1_000))).isNotNull()
         assertThat(fusion.record(signal(CrashEvidenceSource.VHAL_AIRBAG, 2_000))).isNull()
         assertThat(fusion.record(signal(CrashEvidenceSource.VHAL_AIRBAG, 11_000))).isNotNull()
+    }
+
+    @Test
+    fun `high speed and sensor fault ride along as context on a real decision but never gate it alone`() {
+        fusion.record(signal(CrashEvidenceSource.HIGH_SPEED, 1_000))
+        fusion.record(signal(CrashEvidenceSource.CRITICAL_SENSOR_FAULT, 1_100))
+        fusion.record(signal(CrashEvidenceSource.DEVICE_IMU, 1_200))
+        val decision = fusion.record(signal(CrashEvidenceSource.VHAL_SPEED_DROP, 1_500))
+
+        assertThat(decision?.crashDetected).isTrue()
+        assertThat(decision?.signals?.map { it.source }).containsExactly(
+            CrashEvidenceSource.HIGH_SPEED,
+            CrashEvidenceSource.CRITICAL_SENSOR_FAULT,
+            CrashEvidenceSource.DEVICE_IMU,
+            CrashEvidenceSource.VHAL_SPEED_DROP,
+        )
     }
 
     private fun signal(source: CrashEvidenceSource, atMs: Long) =
