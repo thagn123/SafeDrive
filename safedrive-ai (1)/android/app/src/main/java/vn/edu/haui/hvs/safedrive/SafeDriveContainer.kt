@@ -30,6 +30,7 @@ import vn.edu.haui.hvs.safedrive.data.local.DataStoreEmergencyRepository
 import vn.edu.haui.hvs.safedrive.data.local.DataStorePreferencesRepository
 import vn.edu.haui.hvs.safedrive.data.local.InMemoryConversationRepository
 import vn.edu.haui.hvs.safedrive.core.network.NetworkModule
+import vn.edu.haui.hvs.safedrive.core.network.EndpointConfig
 import vn.edu.haui.hvs.safedrive.data.mock.MockFixtures
 import vn.edu.haui.hvs.safedrive.data.mock.MockPolicyEvaluator
 import vn.edu.haui.hvs.safedrive.data.mock.MockSafeDriveGateway
@@ -101,13 +102,21 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
         latencyProfileProvider = { appPreferences.value.developerLatencyProfile },
     )
 
-    val preferencesRepository: PreferencesRepository = DataStorePreferencesRepository(
+    private val dataStorePreferencesRepository = DataStorePreferencesRepository(
         dataStore = context.applicationContext.settingsDataStore,
         allowCleartext = BuildConfig.ALLOW_CLEARTEXT_DEBUG,
     )
+    val preferencesRepository: PreferencesRepository = dataStorePreferencesRepository
 
     val appPreferences: StateFlow<AppPreferences> = preferencesRepository.preferences
-        .stateIn(applicationScope, SharingStarted.Eagerly, AppPreferences())
+        .stateIn(
+            applicationScope,
+            SharingStarted.Eagerly,
+            AppPreferences(
+                backendMode = BackendMode.REMOTE,
+                baseUrl = EndpointConfig.PRODUCTION_BASE_URL,
+            ),
+        )
 
     val vehicleActionExecutor = ModeAwareVehicleActionExecutor(
         preferences = appPreferences,
@@ -309,6 +318,9 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
     )
 
     init {
+        applicationScope.launch {
+            dataStorePreferencesRepository.migrateLegacyEndpointToProduction()
+        }
         voiceAssistantCoordinator.start()
         crashEvidenceAdapter.start()
 

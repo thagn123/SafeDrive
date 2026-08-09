@@ -2,6 +2,7 @@ package vn.edu.haui.hvs.safedrive.feature.settings
 
 import vn.edu.haui.hvs.safedrive.core.model.BackendMode
 import vn.edu.haui.hvs.safedrive.core.model.SimulatedLatencyProfile
+import vn.edu.haui.hvs.safedrive.core.network.EndpointConfig
 
 sealed interface HealthCheckState {
     data object Idle : HealthCheckState
@@ -20,10 +21,10 @@ sealed interface BaseUrlSaveState {
 data class BaseUrlPreset(val label: String, val url: String)
 
 val baseUrlPresets = listOf(
-    BaseUrlPreset("USB Local", "http://127.0.0.1:8000/"),
-    BaseUrlPreset("Emulator", "http://10.0.2.2:8000/"),
-    BaseUrlPreset("LAN Wi-Fi", "http://192.168.1.15:8000/"),
-    BaseUrlPreset("GCP Cloud", "https://safedrive-backend-165374511912.asia-southeast1.run.app/"),
+    BaseUrlPreset("GCP Cloud · HTTPS 443", EndpointConfig.PRODUCTION_BASE_URL),
+    BaseUrlPreset("USB Local · port 8000", EndpointConfig.USB_LOCAL_BASE_URL),
+    BaseUrlPreset("Emulator · port 8000", EndpointConfig.EMULATOR_BASE_URL),
+    BaseUrlPreset("LAN mẫu · port 8000", EndpointConfig.LEGACY_LAN_BASE_URL),
 )
 
 /**

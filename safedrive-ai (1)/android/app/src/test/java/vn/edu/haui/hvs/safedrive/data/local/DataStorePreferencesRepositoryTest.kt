@@ -3,6 +3,8 @@ package vn.edu.haui.hvs.safedrive.data.local
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.common.truth.Truth.assertThat
 import java.io.File
 import kotlinx.coroutines.flow.first
@@ -10,13 +12,12 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import vn.edu.haui.hvs.safedrive.core.common.GatewayResult
 import vn.edu.haui.hvs.safedrive.core.model.BackendMode
+import vn.edu.haui.hvs.safedrive.core.network.EndpointConfig
 
 /**
- * Competition MVP requirement: a fresh debug install must default to Remote Mode against the
- * verified `adb reverse tcp:8000 tcp:8000` localhost path, while a release-shaped instance
- * (allowCleartext=false) must still default to Demo -- a cleartext localhost URL would be
- * rejected by BaseUrlValidator there anyway. Mode must also survive repository recreation
- * (proves DataStore persistence, not just an in-memory default).
+ * A phone must work without USB reverse or a specific Wi-Fi LAN. Both debug- and release-shaped
+ * repositories therefore default to the public HTTPS Cloud Run endpoint. Local port 8000 remains
+ * an explicit Developer Mode choice.
  */
 class DataStorePreferencesRepositoryTest {
 
@@ -24,25 +25,25 @@ class DataStorePreferencesRepositoryTest {
         PreferenceDataStoreFactory.create(produceFile = { File(dir, "test-${System.nanoTime()}.preferences_pb") })
 
     @Test
-    fun `debug-shaped repository defaults to Remote Mode against localhost`() = runTest {
+    fun `debug-shaped repository defaults to Remote Mode against production cloud`() = runTest {
         val dir = File.createTempFile("prefs", "dir").apply { delete(); mkdirs() }
         val repository = DataStorePreferencesRepository(newDataStore(dir), allowCleartext = true)
 
         val prefs = repository.preferences.first()
 
         assertThat(prefs.backendMode).isEqualTo(BackendMode.REMOTE)
-        assertThat(prefs.baseUrl).isEqualTo("http://127.0.0.1:8000/")
+        assertThat(prefs.baseUrl).isEqualTo(EndpointConfig.PRODUCTION_BASE_URL)
     }
 
     @Test
-    fun `release-shaped repository still defaults to Demo Mode`() = runTest {
+    fun `release-shaped repository defaults to Remote Mode against production cloud`() = runTest {
         val dir = File.createTempFile("prefs", "dir").apply { delete(); mkdirs() }
         val repository = DataStorePreferencesRepository(newDataStore(dir), allowCleartext = false)
 
         val prefs = repository.preferences.first()
 
-        assertThat(prefs.backendMode).isEqualTo(BackendMode.DEMO)
-        assertThat(prefs.baseUrl).isEqualTo("")
+        assertThat(prefs.backendMode).isEqualTo(BackendMode.REMOTE)
+        assertThat(prefs.baseUrl).isEqualTo(EndpointConfig.PRODUCTION_BASE_URL)
     }
 
     @Test
@@ -77,7 +78,35 @@ class DataStorePreferencesRepositoryTest {
         val result = repository.setBaseUrl("not a url")
 
         assertThat(result).isInstanceOf(GatewayResult.Failure::class.java)
-        // Still the debug default -- the rejected input was never persisted.
-        assertThat(repository.preferences.first().baseUrl).isEqualTo("http://127.0.0.1:8000/")
+        // Still the cloud default -- the rejected input was never persisted.
+        assertThat(repository.preferences.first().baseUrl).isEqualTo(EndpointConfig.PRODUCTION_BASE_URL)
+    }
+
+    @Test
+    fun `legacy LAN endpoint is migrated to cloud and Remote Mode`() = runTest {
+        val store = FakePreferencesDataStore(
+            mutablePreferencesOf(
+                stringPreferencesKey("base_url") to EndpointConfig.LEGACY_LAN_BASE_URL,
+                stringPreferencesKey("backend_mode") to BackendMode.DEMO.name,
+            ),
+        )
+        val repository = DataStorePreferencesRepository(store, allowCleartext = true)
+
+        repository.migrateLegacyEndpointToProduction()
+
+        val prefs = repository.preferences.first()
+        assertThat(prefs.backendMode).isEqualTo(BackendMode.REMOTE)
+        assertThat(prefs.baseUrl).isEqualTo(EndpointConfig.PRODUCTION_BASE_URL)
+    }
+
+    @Test
+    fun `developer can select local port again after the one-time migration`() = runTest {
+        val store = FakePreferencesDataStore()
+        val repository = DataStorePreferencesRepository(store, allowCleartext = true)
+        repository.migrateLegacyEndpointToProduction()
+
+        repository.setBaseUrl(EndpointConfig.USB_LOCAL_BASE_URL)
+
+        assertThat(repository.preferences.first().baseUrl).isEqualTo(EndpointConfig.USB_LOCAL_BASE_URL)
     }
 }
