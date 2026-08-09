@@ -85,6 +85,7 @@ fun SafeDriveApp(container: SafeDriveContainer) {
                     emergencyRepository = container.emergencyRepository,
                     clock = container.clock,
                     preferencesRepository = container.preferencesRepository,
+                    vehicleDataSource = container.vehicleDataSource,
                 )
             }
         },

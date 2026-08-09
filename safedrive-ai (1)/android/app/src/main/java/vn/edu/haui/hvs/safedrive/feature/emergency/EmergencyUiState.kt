@@ -19,5 +19,8 @@ sealed interface EmergencyUiState {
         val developerMode: Boolean = false,
         /** Optional, bounded LLM second-opinion explanation. Display-only. */
         val reasoningSummary: String? = null,
+        /** Recent speed readings (oldest first), for the Developer-Mode sparkline. Display-only —
+         * never fed back into any safety decision. */
+        val speedHistoryKmh: List<Float> = emptyList(),
     ) : EmergencyUiState
 }

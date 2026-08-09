@@ -3,6 +3,8 @@ package vn.edu.haui.hvs.safedrive.feature.simulator
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -12,6 +14,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -46,7 +50,11 @@ class SimulatorViewModel(
     private val idGenerator: IdGenerator,
     private val clock: AppClock,
     private val cockpitSnapshot: StateFlow<CockpitSnapshot?> = MutableStateFlow(null),
+    private val forceDisableRealtimePollingForTest: Boolean = false,
 ) : ViewModel() {
+
+    private val speedHistoryLimit = 60 // Giữ lại 60 điểm gần nhất
+    private val _speedHistory = MutableStateFlow<List<Float>>(emptyList())
 
     private data class SimulatorInputs(
         val selectedPresetId: String?,
@@ -65,6 +73,35 @@ class SimulatorViewModel(
     private val _effects = Channel<SimulatorUiEffect>(Channel.BUFFERED)
     val effects: Flow<SimulatorUiEffect> = _effects.receiveAsFlow()
 
+    init {
+        viewModelScope.launch {
+            if (forceDisableRealtimePollingForTest) {
+                // Trong Unit Test, chỉ collect thụ động để tránh infinite loop (delay) làm treo test runner.
+                vehicleDataSource.vehicleState.collect { state ->
+                    _speedHistory.update { history ->
+                        val newHistory = history.toMutableList()
+                        newHistory.add(state.speedKmh)
+                        if (newHistory.size > speedHistoryLimit) newHistory.removeAt(0)
+                        newHistory
+                    }
+                }
+            } else {
+                while (isActive) {
+                    val currentSpeed = vehicleDataSource.vehicleState.value.speedKmh
+                    _speedHistory.update { history ->
+                        val newHistory = history.toMutableList()
+                        newHistory.add(currentSpeed)
+                        if (newHistory.size > speedHistoryLimit) {
+                            newHistory.removeAt(0)
+                        }
+                        newHistory
+                    }
+                    delay(200) // Sample continuously every 200ms for real-time scrolling
+                }
+            }
+        }
+    }
+
     private val inputs = combine(
         _selectedPresetId,
         _manual,
@@ -82,7 +119,7 @@ class SimulatorViewModel(
         )
     }
 
-    val uiState: StateFlow<SimulatorUiState> = combine(inputs, cockpitSnapshot) { inputs, snapshot ->
+    val uiState: StateFlow<SimulatorUiState> = combine(inputs, cockpitSnapshot, _speedHistory) { inputs, snapshot, history ->
         val selectedPresetId = inputs.selectedPresetId
         val manual = inputs.manual
         val jsonPreview = inputs.jsonPreview
@@ -92,9 +129,9 @@ class SimulatorViewModel(
             snapshot != null &&
             snapshot.vehicleState.updatedAtMs >= lastAppliedAtMs
         val syncMessage = when {
-            inputs.backendMode == BackendMode.DEMO -> "Mô phỏng cục bộ: trạng thái đã áp dụng ngay."
+            inputs.backendMode == BackendMode.DEMO -> "Mô phỏng cục bộ: trạng thái sẽ được áp dụng ngay."
             lastAppliedAtMs == null -> "Backend thật: hãy chọn kịch bản hoặc áp dụng thông số để đồng bộ."
-            remoteSyncComplete -> "Đã đồng bộ backend · state v${snapshot!!.stateVersion}. Trợ lý sẽ đọc đúng trạng thái này."
+            remoteSyncComplete -> "Đã đồng bộ backend & state v${snapshot!!.stateVersion}. Trợ lý sẽ đọc trạng thái này."
             else -> "Đang đồng bộ dữ liệu xe với backend..."
         }
         SimulatorUiState(
@@ -106,6 +143,8 @@ class SimulatorViewModel(
             backendMode = inputs.backendMode,
             syncMessage = syncMessage,
             isSynchronizing = inputs.backendMode == BackendMode.REMOTE && lastAppliedAtMs != null && !remoteSyncComplete,
+            cockpitSnapshot = snapshot,
+            speedHistory = history,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SimulatorUiState(presets = presets))
 

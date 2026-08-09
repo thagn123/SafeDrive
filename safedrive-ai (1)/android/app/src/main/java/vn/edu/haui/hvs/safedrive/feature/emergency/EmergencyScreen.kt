@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,7 +33,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -252,6 +257,10 @@ private fun EvidenceCard(active: EmergencyUiState.Active, onTriggerVoiceCancel: 
         if (active.developerMode) {
             // Technical signal-state view — only shown once Developer Mode is switched on
             // (Settings), so the plain-language evidence list above stays uncluttered by default.
+            SpeedSparkline(
+                samples = active.speedHistoryKmh,
+                modifier = Modifier.padding(top = 12.dp),
+            )
             SignalStatePanel(
                 evidenceCodes = active.evidence.map { it.code }.toSet(),
                 modifier = Modifier.padding(top = 12.dp),
@@ -336,5 +345,74 @@ private fun SignalChip(label: String, active: Boolean) {
         Box(modifier = Modifier.size(8.dp).background(dotColor, CircleShape))
         Spacer(modifier = Modifier.width(6.dp))
         Text(label, style = MaterialTheme.typography.labelSmall, color = textColor)
+    }
+}
+
+/** Speed as a continuous value needs a graph, not an on/off light — unlike [SignalStatePanel]'s
+ * chips, which are correct for the binary VHAL/IMU signals. Sourced from
+ * [EmergencyViewModel]'s rolling [EmergencyUiState.Active.speedHistoryKmh] window. */
+@Composable
+private fun SpeedSparkline(samples: List<Float>, modifier: Modifier = Modifier) {
+    val colors = LocalSafeDriveStatusColors.current
+    Column(modifier = modifier) {
+        Text(
+            "Tốc độ theo thời gian (km/h):",
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.onSurfaceMuted,
+        )
+        if (samples.size < 2) {
+            Text(
+                "Chưa đủ dữ liệu để vẽ đồ thị.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF64748B),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        } else {
+            val minValue = samples.min()
+            val maxValue = samples.max()
+            val range = (maxValue - minValue).coerceAtLeast(1f)
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp)
+                    .padding(top = 6.dp)
+                    .background(Color(0xFF0B1622), RoundedCornerShape(8.dp)),
+            ) {
+                val stepX = size.width / (samples.size - 1)
+                fun yOf(value: Float) = size.height - ((value - minValue) / range) * size.height
+                val points = samples.mapIndexed { index, value -> Offset(index * stepX, yOf(value)) }
+                val path = Path().apply { moveTo(points[0].x, points[0].y) }
+                // Cubic-Bezier through each pair of real points (never averaged/smoothed away) so a
+                // gradual multi-sample trend reads as a flowing curve instead of jagged straight-line
+                // corners, while a genuine one-interval jump (a real sudden stop) still crosses the
+                // same x-distance just as steeply — smoother in general, sharp exactly where the data
+                // itself is sharp.
+                for (i in 1 until points.size) {
+                    val previousPoint = points[i - 1]
+                    val currentPoint = points[i]
+                    val midX = previousPoint.x + (currentPoint.x - previousPoint.x) / 2
+                    path.cubicTo(midX, previousPoint.y, midX, currentPoint.y, currentPoint.x, currentPoint.y)
+                }
+                drawPath(path, color = Color(0xFF2DD4BF), style = Stroke(width = 4f))
+                // A sharp drop between the last two samples is the same shape
+                // VHAL_SPEED_DROP/VHAL_SUDDEN_STOP_AT_SPEED are built to catch — highlight it so
+                // it reads as visually obvious, not just a line going down.
+                val previous = samples[samples.size - 2]
+                val last = samples.last()
+                if (previous - last >= 20f) {
+                    drawCircle(
+                        color = Color(0xFFF87171),
+                        radius = 6f,
+                        center = Offset((samples.size - 1) * stepX, yOf(last)),
+                    )
+                }
+            }
+            Text(
+                "Hiện tại: ${samples.last().toInt()} km/h",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF64748B),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
     }
 }

@@ -49,6 +49,7 @@ class SimulatorViewModelTest {
         sessionCoordinator = sessionCoordinator,
         idGenerator = idGenerator,
         clock = clock,
+        forceDisableRealtimePollingForTest = true,
     )
 
     @Test
