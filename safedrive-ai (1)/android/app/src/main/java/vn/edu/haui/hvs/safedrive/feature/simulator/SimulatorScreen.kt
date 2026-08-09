@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.collectLatest
 import vn.edu.haui.hvs.safedrive.core.designsystem.Dimensions
 import vn.edu.haui.hvs.safedrive.core.designsystem.LocalSafeDriveStatusColors
 import vn.edu.haui.hvs.safedrive.core.model.BackendMode
+import vn.edu.haui.hvs.safedrive.feature.simulator.components.CrashSignalTestPanel
 import vn.edu.haui.hvs.safedrive.feature.simulator.components.JsonPreviewDialog
 import vn.edu.haui.hvs.safedrive.feature.simulator.components.ScenarioPresetCard
 import vn.edu.haui.hvs.safedrive.feature.simulator.components.SignalDashboard
@@ -112,6 +113,11 @@ fun SimulatorScreen(viewModel: SimulatorViewModel, onBack: () -> Unit) {
         item {
             if (state.backendMode == BackendMode.DEMO) {
                 SignalDashboard(uiState = state)
+            }
+        }
+        item {
+            if (state.developerMode) {
+                CrashSignalTestPanel(onInject = viewModel::injectCrashSignal)
             }
         }
         item {

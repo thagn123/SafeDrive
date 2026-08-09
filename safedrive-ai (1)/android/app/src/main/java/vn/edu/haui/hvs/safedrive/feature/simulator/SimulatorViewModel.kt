@@ -14,8 +14,6 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -33,6 +31,8 @@ import vn.edu.haui.hvs.safedrive.core.model.SafeDriveEventType
 import vn.edu.haui.hvs.safedrive.core.model.ScenarioPreset
 import vn.edu.haui.hvs.safedrive.core.model.VehicleState
 import vn.edu.haui.hvs.safedrive.data.mock.MockFixtures
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceAdapter
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSource
 import vn.edu.haui.hvs.safedrive.domain.repository.PreferencesRepository
 import vn.edu.haui.hvs.safedrive.domain.repository.VehicleDataSource
 import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
@@ -49,9 +49,19 @@ class SimulatorViewModel(
     private val sessionCoordinator: SessionCoordinator,
     private val idGenerator: IdGenerator,
     private val clock: AppClock,
+    private val crashEvidenceAdapter: CrashEvidenceAdapter,
     private val cockpitSnapshot: StateFlow<CockpitSnapshot?> = MutableStateFlow(null),
     private val forceDisableRealtimePollingForTest: Boolean = false,
 ) : ViewModel() {
+
+    /** Developer-Mode-only test hook: feeds a single signal straight into the real
+     * [CrashEvidenceAdapter]/`CrashEvidenceFusion` pipeline exactly as a genuine VHAL/IMU event
+     * would (see `AndroidCrashEvidenceAdapter.injectSignal`), so the SOS screen's signal panel and
+     * fusion rules (impact/airbag alone vs. IMU+speed-drop together vs. context-only signals) can
+     * be observed on any device -- including one with no real Car Service, like a plain phone. */
+    fun injectCrashSignal(source: CrashEvidenceSource) {
+        crashEvidenceAdapter.injectSignal(source)
+    }
 
     private val speedHistoryLimit = 60 // Giữ lại 60 điểm gần nhất
     private val _speedHistory = MutableStateFlow<List<Float>>(emptyList())

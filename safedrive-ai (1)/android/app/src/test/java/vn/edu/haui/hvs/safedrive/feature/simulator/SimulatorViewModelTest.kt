@@ -2,7 +2,9 @@ package vn.edu.haui.hvs.safedrive.feature.simulator
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -17,6 +19,9 @@ import vn.edu.haui.hvs.safedrive.data.mock.MockFixtures
 import vn.edu.haui.hvs.safedrive.data.mock.MockPolicyEvaluator
 import vn.edu.haui.hvs.safedrive.data.mock.MockSafeDriveGateway
 import vn.edu.haui.hvs.safedrive.domain.repository.AppPreferences
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceAdapter
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceDecision
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSource
 import vn.edu.haui.hvs.safedrive.domain.repository.GatewayProvider
 import vn.edu.haui.hvs.safedrive.domain.repository.SafeDriveGateway
 import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
@@ -41,6 +46,12 @@ class SimulatorViewModelTest {
         override fun current() = gateway
     }
     private val sessionCoordinator = SessionCoordinator(gatewayProvider, MutableStateFlow(AppPreferences()), idGenerator, clock, "test")
+    private val crashEvidenceAdapter = object : CrashEvidenceAdapter {
+        override val decisions: Flow<CrashEvidenceDecision> = emptyFlow()
+        override fun start() = Unit
+        override fun stop() = Unit
+        override fun injectSignal(source: CrashEvidenceSource, confidence: Float) = Unit
+    }
 
     private fun buildViewModel() = SimulatorViewModel(
         vehicleDataSource = vehicleDataSource,
@@ -49,6 +60,7 @@ class SimulatorViewModelTest {
         sessionCoordinator = sessionCoordinator,
         idGenerator = idGenerator,
         clock = clock,
+        crashEvidenceAdapter = crashEvidenceAdapter,
         forceDisableRealtimePollingForTest = true,
     )
 

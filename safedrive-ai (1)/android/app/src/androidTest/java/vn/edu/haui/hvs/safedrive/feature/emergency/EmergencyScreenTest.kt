@@ -14,6 +14,8 @@ import vn.edu.haui.hvs.safedrive.core.model.EvidenceItem
 import vn.edu.haui.hvs.safedrive.core.testing.FakeClock
 import vn.edu.haui.hvs.safedrive.core.testing.FakeEmergencyRepository
 import vn.edu.haui.hvs.safedrive.core.testing.FakePreferencesRepository
+import vn.edu.haui.hvs.safedrive.data.mock.MockFixtures
+import vn.edu.haui.hvs.safedrive.vehicle.MockVehicleDataSource
 
 /**
  * Compose UI test per docs/android-mvp-plan/07-testing-security-acceptance.md ("Emergency blocks
@@ -33,7 +35,14 @@ class EmergencyScreenTest {
 
     private fun setContentWithSnapshot(snapshot: EmergencySnapshot): FakeEmergencyRepository {
         val repository = FakeEmergencyRepository(snapshot)
-        val viewModel = EmergencyViewModel(repository, FakeClock(0L), FakePreferencesRepository())
+        val clock = FakeClock(0L)
+        val vehicleDataSource = MockVehicleDataSource(clock, MockFixtures(clock))
+        val viewModel = EmergencyViewModel(
+            repository,
+            clock,
+            FakePreferencesRepository(),
+            vehicleDataSource,
+        )
         composeRule.setContent {
             SafeDriveTheme { EmergencyScreen(viewModel = viewModel, onTriggerVoiceCancel = {}) }
         }
