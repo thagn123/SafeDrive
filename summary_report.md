@@ -3,10 +3,14 @@
 ## Trạng thái phát hành
 
 - Nhánh phát hành: `main`.
+- Product release commit: `17fe087` (`feat(android): finalize crash signal demo and release evidence`).
 - Voice, Agent Armor, Vehicle Action Executor, Crash Evidence Fusion, Context Memory,
   Signal Dashboard và Developer Crash Test Panel nằm trong cùng một phiên bản Android.
 - Backend production: `https://safedrive-backend-165374511912.asia-southeast1.run.app`.
 - Vertex AI đang hoạt động với `vertex_ai/gemini-2.5-flash`.
+- APK release: `SafeDrive-demo-unified-17fe087.apk`, SHA-256
+  `A1CE5999262ECA41F383C71B6632F9517C3B2A931E94D81D6816576786B44C46`.
+- CarSky artifact `safedrive-apk` phiên bản `0.0.4` đang là `latest` và chứa đúng APK release.
 
 ## 1. Voice
 
@@ -57,6 +61,17 @@ thực. Gửi cứu hộ vẫn là `SIMULATION_ONLY`; sản phẩm không tuyên
   `VehicleDataSource` mới.
 - Live production demo matrix: **13/13 passed**, gồm Vertex AI, grounding DTC, fatigue, HVAC
   confirm/replay protection, stale-action rejection, crash/SOS, cancel, rescue brief và WebSocket.
+- APK release đã cài cập nhật thành công lên Xiaomi qua ADB.
+
+## Trạng thái CarSky IVI
+
+- Lần instrumentation gần nhất trên IVI đã đạt `OK (1 test)` cho HVAC/cửa/media thật.
+- Artifact release `0.0.4` đã upload lên CarSky và APK cũng đã lưu trong bucket riêng
+  `safedrive-carsky-apk-transfer`.
+- Tại thời điểm chốt báo cáo, IVI vẫn đang chạy APK cũ có SHA-256 bắt đầu bằng `ccea43a9...`;
+  chưa được phép tuyên bố node đang chạy `17fe087` cho đến khi cài APK và kiểm tra lại hash.
+- Không thay đổi blueprint 20-node đang `Running (20/20)` chỉ để cập nhật APK; tránh làm gián đoạn
+  môi trường demo đang ổn định.
 
 ## Phạm vi tuyên bố khi demo
 
