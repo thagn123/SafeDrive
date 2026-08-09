@@ -3,6 +3,7 @@ package vn.edu.haui.hvs.safedrive.data.local
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.google.common.truth.Truth.assertThat
@@ -88,6 +89,24 @@ class DataStorePreferencesRepositoryTest {
             mutablePreferencesOf(
                 stringPreferencesKey("base_url") to EndpointConfig.LEGACY_LAN_BASE_URL,
                 stringPreferencesKey("backend_mode") to BackendMode.DEMO.name,
+            ),
+        )
+        val repository = DataStorePreferencesRepository(store, allowCleartext = true)
+
+        repository.migrateLegacyEndpointToProduction()
+
+        val prefs = repository.preferences.first()
+        assertThat(prefs.backendMode).isEqualTo(BackendMode.REMOTE)
+        assertThat(prefs.baseUrl).isEqualTo(EndpointConfig.PRODUCTION_BASE_URL)
+    }
+
+    @Test
+    fun `v2 migration repairs legacy endpoint even when old v1 marker exists`() = runTest {
+        val store = FakePreferencesDataStore(
+            mutablePreferencesOf(
+                stringPreferencesKey("base_url") to EndpointConfig.USB_LOCAL_BASE_URL,
+                stringPreferencesKey("backend_mode") to BackendMode.REMOTE.name,
+                booleanPreferencesKey("production_endpoint_migrated_v1") to true,
             ),
         )
         val repository = DataStorePreferencesRepository(store, allowCleartext = true)

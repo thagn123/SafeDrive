@@ -22,7 +22,7 @@ private object Keys {
     val WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
     val DEVELOPER_MODE = booleanPreferencesKey("developer_mode")
     val DEVELOPER_LATENCY_PROFILE = stringPreferencesKey("developer_latency_profile")
-    val PRODUCTION_ENDPOINT_MIGRATED = booleanPreferencesKey("production_endpoint_migrated_v1")
+    val PRODUCTION_ENDPOINT_MIGRATED = booleanPreferencesKey("production_endpoint_migrated_v2")
 }
 
 /** DataStore-backed [PreferencesRepository]. Never stores secrets or API keys. */
@@ -57,10 +57,12 @@ class DataStorePreferencesRepository(
     }
 
     /**
-     * One-time upgrade for APKs that previously pointed phones at localhost/emulator/a sample LAN
-     * address. Merely changing a default is insufficient because DataStore survives `adb install
-     * -r`; this persists the production URL and Remote mode. After the marker is written, a
-     * developer may deliberately select any local preset again without it being remapped.
+     * One-time upgrade for APKs that previously pointed phones/AAOS nodes at localhost, the
+     * emulator host alias, or a sample LAN address. Merely changing a default is insufficient
+     * because DataStore survives `adb install -r` and the v1 migration marker may already have
+     * been written by an older CarSky artifact. The v2 marker intentionally re-checks the stored
+     * URL once, persists the production URL and Remote mode for known legacy endpoints, then lets
+     * a developer deliberately select a local preset again without it being remapped.
      */
     suspend fun migrateLegacyEndpointToProduction() {
         dataStore.edit { prefs ->
