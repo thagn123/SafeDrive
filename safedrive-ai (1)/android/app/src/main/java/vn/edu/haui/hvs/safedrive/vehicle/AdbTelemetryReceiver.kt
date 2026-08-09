@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import vn.edu.haui.hvs.safedrive.core.common.AppClock
 import vn.edu.haui.hvs.safedrive.core.model.Dtc
 import vn.edu.haui.hvs.safedrive.core.model.Severity
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceAdapter
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSource
 import vn.edu.haui.hvs.safedrive.domain.repository.VehicleDataSource
 
 data class AdbTelemetryCommand(
@@ -28,6 +30,7 @@ data class AdbTelemetryCommand(
  */
 class AdbTelemetryController(
     private val vehicleDataSource: VehicleDataSource,
+    private val crashEvidenceAdapter: CrashEvidenceAdapter,
     private val clock: AppClock,
     initiallyEnabled: Boolean,
     private val commandsAllowed: () -> Boolean,
@@ -63,6 +66,11 @@ class AdbTelemetryController(
                     updatedAtMs = now,
                 )
             }
+        }
+
+        if (command.crashDetected == true && !vehicleState.crashDetected) {
+            crashEvidenceAdapter.injectSignal(CrashEvidenceSource.VHAL_IMPACT)
+            crashEvidenceAdapter.injectSignal(CrashEvidenceSource.VHAL_AIRBAG)
         }
 
         vehicleDataSource.updateManual(

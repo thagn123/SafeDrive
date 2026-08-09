@@ -122,8 +122,11 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
             ),
         )
 
+    val crashEvidenceAdapter = CrashEvidenceAdapterFactory.create(context.applicationContext, clock)
+
     val adbTelemetryController = AdbTelemetryController(
         vehicleDataSource = vehicleDataSource,
+        crashEvidenceAdapter = crashEvidenceAdapter,
         clock = clock,
         initiallyEnabled = BuildConfig.DEBUG,
         commandsAllowed = { BuildConfig.DEBUG && appPreferences.value.developerMode },
@@ -134,7 +137,6 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
         preferences = appPreferences,
         realExecutor = VehicleActionExecutorFactory.create(context.applicationContext),
     )
-    val crashEvidenceAdapter = CrashEvidenceAdapterFactory.create(context.applicationContext, clock)
 
     @Volatile
     private var cachedRemote: Pair<String, SafeDriveGateway>? = null

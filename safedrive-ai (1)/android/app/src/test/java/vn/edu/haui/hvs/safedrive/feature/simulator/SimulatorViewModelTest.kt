@@ -56,6 +56,7 @@ class SimulatorViewModelTest {
     }
     private val adbTelemetryController = AdbTelemetryController(
         vehicleDataSource = vehicleDataSource,
+        crashEvidenceAdapter = crashEvidenceAdapter,
         clock = clock,
         initiallyEnabled = true,
         commandsAllowed = { true },

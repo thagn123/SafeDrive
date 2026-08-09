@@ -1,14 +1,28 @@
 package vn.edu.haui.hvs.safedrive.vehicle
 
 import com.google.common.truth.Truth.assertThat
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import org.junit.Test
 import vn.edu.haui.hvs.safedrive.core.testing.FakeClock
 import vn.edu.haui.hvs.safedrive.data.mock.MockFixtures
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceAdapter
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceDecision
+import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSource
 
 class AdbTelemetryControllerTest {
 
     private val clock = FakeClock(42_000L)
     private val vehicleDataSource = MockVehicleDataSource(clock, MockFixtures(clock))
+    private val injectedCrashSignals = mutableListOf<CrashEvidenceSource>()
+    private val crashEvidenceAdapter = object : CrashEvidenceAdapter {
+        override val decisions: Flow<CrashEvidenceDecision> = emptyFlow()
+        override fun start() = Unit
+        override fun stop() = Unit
+        override fun injectSignal(source: CrashEvidenceSource, confidence: Float) {
+            injectedCrashSignals += source
+        }
+    }
 
     @Test
     fun `disabled controller rejects command without changing vehicle state`() {
@@ -52,6 +66,23 @@ class AdbTelemetryControllerTest {
             .contains("CRITICAL_SENSOR_FAULT")
         assertThat(vehicleDataSource.driverSupportSignals.value.wearableHeartRateBpm).isEqualTo(250)
         assertThat(vehicleDataSource.driverSupportSignals.value.wearableLastUpdateMs).isEqualTo(clock.nowMs())
+        assertThat(injectedCrashSignals).containsExactly(
+            CrashEvidenceSource.VHAL_IMPACT,
+            CrashEvidenceSource.VHAL_AIRBAG,
+        ).inOrder()
+    }
+
+    @Test
+    fun `repeated crash command does not inject duplicate crash evidence`() {
+        val controller = controller(initiallyEnabled = true)
+
+        controller.submit(AdbTelemetryCommand(crashDetected = true))
+        controller.submit(AdbTelemetryCommand(crashDetected = true))
+
+        assertThat(injectedCrashSignals).containsExactly(
+            CrashEvidenceSource.VHAL_IMPACT,
+            CrashEvidenceSource.VHAL_AIRBAG,
+        ).inOrder()
     }
 
     @Test
@@ -78,6 +109,7 @@ class AdbTelemetryControllerTest {
         commandsAllowed: Boolean = true,
     ) = AdbTelemetryController(
         vehicleDataSource = vehicleDataSource,
+        crashEvidenceAdapter = crashEvidenceAdapter,
         clock = clock,
         initiallyEnabled = initiallyEnabled,
         commandsAllowed = { commandsAllowed },
