@@ -1,6 +1,8 @@
 package vn.edu.haui.hvs.safedrive
 
 import android.content.Context
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -56,6 +58,8 @@ import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
 import vn.edu.haui.hvs.safedrive.domain.usecase.VoiceAssistantCoordinator
 import vn.edu.haui.hvs.safedrive.feature.emergency.EmergencyReducer
 import vn.edu.haui.hvs.safedrive.vehicle.MockVehicleDataSource
+import vn.edu.haui.hvs.safedrive.vehicle.AdbTelemetryController
+import vn.edu.haui.hvs.safedrive.vehicle.AdbTelemetryReceiver
 import vn.edu.haui.hvs.safedrive.vehicle.ModeAwareVehicleActionExecutor
 import vn.edu.haui.hvs.safedrive.vehicle.VehicleActionExecutorFactory
 import vn.edu.haui.hvs.safedrive.vehicle.CrashEvidenceAdapterFactory
@@ -117,6 +121,14 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
                 baseUrl = EndpointConfig.PRODUCTION_BASE_URL,
             ),
         )
+
+    val adbTelemetryController = AdbTelemetryController(
+        vehicleDataSource = vehicleDataSource,
+        clock = clock,
+        initiallyEnabled = BuildConfig.DEBUG,
+        commandsAllowed = { BuildConfig.DEBUG && appPreferences.value.developerMode },
+    )
+    private val adbTelemetryReceiver = AdbTelemetryReceiver(adbTelemetryController)
 
     val vehicleActionExecutor = ModeAwareVehicleActionExecutor(
         preferences = appPreferences,
@@ -318,6 +330,14 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
     )
 
     init {
+        if (BuildConfig.DEBUG) {
+            ContextCompat.registerReceiver(
+                context.applicationContext,
+                adbTelemetryReceiver,
+                IntentFilter(AdbTelemetryReceiver.ACTION_MOCK_TELEMETRY),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+        }
         applicationScope.launch {
             dataStorePreferencesRepository.migrateLegacyEndpointToProduction()
         }

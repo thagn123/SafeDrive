@@ -1,34 +1,53 @@
+[CmdletBinding()]
 param (
-    [float]$Speed = -1,
+    [Nullable[float]]$Speed = $null,
     [switch]$Crash,
-    [int]$HeartRate = -1,
+    [switch]$ClearCrash,
+    [int]$HeartRate = -2,
     [string]$DtcCode = "",
-    [switch]$DtcClear
+    [switch]$DtcClear,
+    [string]$DeviceSerial = ""
 )
 
+$ErrorActionPreference = "Stop"
 $Action = "vn.edu.haui.hvs.safedrive.action.MOCK_TELEMETRY"
-$Command = "adb shell am broadcast -a $Action"
+$Adb = (Get-Command adb -ErrorAction Stop).Source
 
-if ($Speed -ge 0) {
-    $Command += " --ef speedKmh $Speed"
+if ($Crash -and $ClearCrash) {
+    throw "Choose either -Crash or -ClearCrash, not both."
+}
+if ($null -ne $Speed -and ($Speed -lt 0 -or $Speed -gt 300)) {
+    throw "Speed must be between 0 and 300 km/h."
+}
+if ($HeartRate -ne -2 -and $HeartRate -ne -1 -and ($HeartRate -lt 20 -or $HeartRate -gt 250)) {
+    throw "HeartRate must be -1 (clear) or between 20 and 250 bpm."
+}
+if ($DtcCode -ne "" -and $DtcCode -notmatch '^[A-Z0-9_]{1,64}$') {
+    throw "DtcCode may contain only A-Z, 0-9 and underscore (maximum 64 characters)."
 }
 
-if ($Crash) {
-    $Command += " --ez crashDetected true"
-}
-
-if ($HeartRate -ge 0) {
-    $Command += " --ei heartRate $HeartRate"
-}
-
-if ($DtcCode -ne "") {
-    $Command += " --es dtcCode `"$DtcCode`""
-    if ($DtcClear) {
-        $Command += " --ez dtcClear true"
-    } else {
-        $Command += " --ez dtcClear false"
+if ($DeviceSerial -eq "") {
+    $ConnectedDevices = @(
+        & $Adb devices |
+            Select-Object -Skip 1 |
+            Where-Object { $_ -match '^([^\s]+)\s+device$' } |
+            ForEach-Object { $Matches[1] }
+    )
+    if ($ConnectedDevices.Count -ne 1) {
+        throw "Expected exactly one connected ADB device; found $($ConnectedDevices.Count). Use -DeviceSerial when multiple devices are connected."
     }
+    $DeviceSerial = $ConnectedDevices[0]
 }
 
-Write-Host "Executing: $Command"
-Invoke-Expression $Command
+$AdbArgs = @("-s", $DeviceSerial, "shell", "am", "broadcast", "-a", $Action)
+if ($null -ne $Speed) { $AdbArgs += @("--ef", "speedKmh", $Speed.ToString([Globalization.CultureInfo]::InvariantCulture)) }
+if ($Crash) { $AdbArgs += @("--ez", "crashDetected", "true") }
+if ($ClearCrash) { $AdbArgs += @("--ez", "crashDetected", "false") }
+if ($HeartRate -ne -2) { $AdbArgs += @("--ei", "heartRate", $HeartRate.ToString()) }
+if ($DtcCode -ne "") {
+    $AdbArgs += @("--es", "dtcCode", $DtcCode, "--ez", "dtcClear", $DtcClear.IsPresent.ToString().ToLowerInvariant())
+}
+
+$Output = & $Adb @AdbArgs 2>&1
+if ($LASTEXITCODE -ne 0) { throw ($Output -join [Environment]::NewLine) }
+$Output

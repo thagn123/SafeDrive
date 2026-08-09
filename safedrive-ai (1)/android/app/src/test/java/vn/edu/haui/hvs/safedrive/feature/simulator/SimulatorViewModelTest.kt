@@ -26,6 +26,7 @@ import vn.edu.haui.hvs.safedrive.domain.repository.GatewayProvider
 import vn.edu.haui.hvs.safedrive.domain.repository.SafeDriveGateway
 import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
 import vn.edu.haui.hvs.safedrive.vehicle.MockVehicleDataSource
+import vn.edu.haui.hvs.safedrive.vehicle.AdbTelemetryController
 
 /**
  * Scenario regression per docs/android-mvp-plan/08-claude-prompts.md, Prompt 4: every preset must
@@ -41,6 +42,7 @@ class SimulatorViewModelTest {
     private val idGenerator = UuidIdGenerator()
     private val fixtures = MockFixtures(clock)
     private val vehicleDataSource = MockVehicleDataSource(clock, fixtures)
+    private val preferencesRepository = FakePreferencesRepository(AppPreferences(developerMode = true))
     private val gateway: SafeDriveGateway = MockSafeDriveGateway(clock, idGenerator, fixtures, MockPolicyEvaluator(clock))
     private val gatewayProvider = object : GatewayProvider {
         override fun current() = gateway
@@ -52,15 +54,22 @@ class SimulatorViewModelTest {
         override fun stop() = Unit
         override fun injectSignal(source: CrashEvidenceSource, confidence: Float) = Unit
     }
+    private val adbTelemetryController = AdbTelemetryController(
+        vehicleDataSource = vehicleDataSource,
+        clock = clock,
+        initiallyEnabled = true,
+        commandsAllowed = { true },
+    )
 
     private fun buildViewModel() = SimulatorViewModel(
         vehicleDataSource = vehicleDataSource,
         fixtures = fixtures,
-        preferencesRepository = FakePreferencesRepository(),
+        preferencesRepository = preferencesRepository,
         sessionCoordinator = sessionCoordinator,
         idGenerator = idGenerator,
         clock = clock,
         crashEvidenceAdapter = crashEvidenceAdapter,
+        adbTelemetryController = adbTelemetryController,
         forceDisableRealtimePollingForTest = true,
     )
 
@@ -144,6 +153,19 @@ class SimulatorViewModelTest {
         assertThat(json.lowercase()).doesNotContain("api_key")
         assertThat(json.lowercase()).doesNotContain("gemini")
         assertThat(json).contains("engine_temperature_c")
+        job.cancel()
+    }
+
+    @Test
+    fun `ADB telemetry switch updates observable simulator state`() = runTest(mainDispatcherRule.dispatcher) {
+        val viewModel = buildViewModel()
+        val job = launch(Dispatchers.Unconfined) { viewModel.uiState.collect {} }
+
+        assertThat(viewModel.uiState.value.adbTelemetryEnabled).isTrue()
+        viewModel.toggleAdbTelemetry(false)
+        advanceUntilIdle()
+        assertThat(viewModel.uiState.value.adbTelemetryEnabled).isFalse()
+
         job.cancel()
     }
 }

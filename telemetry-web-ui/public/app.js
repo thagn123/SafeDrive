@@ -6,14 +6,30 @@ const hrValue = document.getElementById('hr-value');
 const crashBtn = document.getElementById('crash-btn');
 const dtcSelect = document.getElementById('dtc-select');
 const toast = document.getElementById('toast');
+const adbStatus = document.getElementById('adb-status');
 
 // State
 let debounceTimer;
 
+async function refreshAdbStatus() {
+    try {
+        const response = await fetch('/api/status');
+        const status = await response.json();
+        adbStatus.textContent = status.connected ? 'ADB Connected' : `ADB Devices: ${status.deviceCount || 0}`;
+        adbStatus.parentElement.classList.toggle('offline', !status.connected);
+    } catch (_error) {
+        adbStatus.textContent = 'ADB Unavailable';
+        adbStatus.parentElement.classList.add('offline');
+    }
+}
+
+refreshAdbStatus();
+setInterval(refreshAdbStatus, 3000);
+
 // API Call
 async function sendTelemetry(data) {
     try {
-        const response = await fetch('http://localhost:3000/api/telemetry', {
+        const response = await fetch('/api/telemetry', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'

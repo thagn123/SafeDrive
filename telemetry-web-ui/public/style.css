@@ -108,6 +108,16 @@ h1 span {
     animation: pulse 2s infinite;
 }
 
+.status-indicator.offline {
+    color: var(--danger);
+    border-color: rgba(255, 0, 60, 0.3);
+}
+
+.status-indicator.offline .dot {
+    background-color: var(--danger);
+    animation: none;
+}
+
 @keyframes pulse {
     0% { box-shadow: 0 0 0 0 rgba(0, 240, 255, 0.7); }
     70% { box-shadow: 0 0 0 10px rgba(0, 240, 255, 0); }

@@ -36,6 +36,7 @@ import vn.edu.haui.hvs.safedrive.domain.repository.CrashEvidenceSource
 import vn.edu.haui.hvs.safedrive.domain.repository.PreferencesRepository
 import vn.edu.haui.hvs.safedrive.domain.repository.VehicleDataSource
 import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
+import vn.edu.haui.hvs.safedrive.vehicle.AdbTelemetryController
 
 /**
  * Developer-Mode-only vehicle simulator. Every apply goes through [VehicleDataSource] so Cockpit,
@@ -50,6 +51,7 @@ class SimulatorViewModel(
     private val idGenerator: IdGenerator,
     private val clock: AppClock,
     private val crashEvidenceAdapter: CrashEvidenceAdapter,
+    private val adbTelemetryController: AdbTelemetryController,
     private val cockpitSnapshot: StateFlow<CockpitSnapshot?> = MutableStateFlow(null),
     private val forceDisableRealtimePollingForTest: Boolean = false,
 ) : ViewModel() {
@@ -79,7 +81,6 @@ class SimulatorViewModel(
     private val presets = fixtures.scenarioPresets()
     private val _selectedPresetId = MutableStateFlow<String?>(null)
     private val _manual = MutableStateFlow(ManualTelemetryForm())
-    private val _adbTelemetryEnabled = MutableStateFlow(false)
     private val _jsonPreview = MutableStateFlow<String?>(null)
     private val _lastAppliedAtMs = MutableStateFlow<Long?>(null)
     private val _effects = Channel<SimulatorUiEffect>(Channel.BUFFERED)
@@ -114,7 +115,7 @@ class SimulatorViewModel(
         }
     }
 
-    private val inputs = combine(
+    private val baseInputs = combine(
         _selectedPresetId,
         _manual,
         _jsonPreview,
@@ -127,9 +128,12 @@ class SimulatorViewModel(
             jsonPreview = jsonPreview,
             backendMode = prefs.backendMode,
             developerMode = prefs.developerMode,
-            adbTelemetryEnabled = _adbTelemetryEnabled.value,
+            adbTelemetryEnabled = false,
             lastAppliedAtMs = lastAppliedAtMs,
         )
+    }
+    private val inputs = combine(baseInputs, adbTelemetryController.enabled) { values, adbEnabled ->
+        values.copy(adbTelemetryEnabled = adbEnabled)
     }
 
     val uiState: StateFlow<SimulatorUiState> = combine(inputs, cockpitSnapshot, _speedHistory) { inputs, snapshot, history ->
@@ -153,6 +157,7 @@ class SimulatorViewModel(
             manual = manual,
             jsonPreview = jsonPreview,
             developerMode = inputs.developerMode,
+            adbTelemetryEnabled = inputs.adbTelemetryEnabled && inputs.developerMode,
             backendMode = inputs.backendMode,
             syncMessage = syncMessage,
             isSynchronizing = inputs.backendMode == BackendMode.REMOTE && lastAppliedAtMs != null && !remoteSyncComplete,
@@ -230,52 +235,7 @@ class SimulatorViewModel(
     }
 
     fun toggleAdbTelemetry(enabled: Boolean) {
-        _adbTelemetryEnabled.value = enabled
-    }
-
-    fun injectAdbTelemetry(
-        newSpeed: Float?,
-        newCrash: Boolean?,
-        newHeartRate: Int?,
-        dtcCode: String?,
-        dtcClear: Boolean
-    ) {
-        val currentVehicleState = vehicleDataSource.vehicleState.value
-        val currentDriverSignals = vehicleDataSource.driverSupportSignals.value
-
-        val activeDtcs = currentVehicleState.activeDtcs.toMutableList()
-        if (dtcCode != null) {
-            if (dtcClear) {
-                activeDtcs.removeAll { it.code == dtcCode }
-            } else {
-                if (activeDtcs.none { it.code == dtcCode }) {
-                    activeDtcs.add(
-                        vn.edu.haui.hvs.safedrive.core.model.Dtc(
-                            code = dtcCode,
-                            title = "Lỗi ADB ($dtcCode)",
-                            description = "Tiêm từ lệnh ADB",
-                            severity = vn.edu.haui.hvs.safedrive.core.model.Severity.CRITICAL,
-                            recommendation = "Kiểm tra ngay",
-                            updatedAtMs = System.currentTimeMillis()
-                        )
-                    )
-                }
-            }
-        }
-
-        val updatedVehicleState = currentVehicleState.copy(
-            speedKmh = newSpeed ?: currentVehicleState.speedKmh,
-            crashDetected = newCrash ?: currentVehicleState.crashDetected,
-            activeDtcs = activeDtcs,
-            updatedAtMs = System.currentTimeMillis()
-        )
-
-        val updatedDriverSignals = currentDriverSignals.copy(
-            wearableHeartRateBpm = newHeartRate ?: currentDriverSignals.wearableHeartRateBpm,
-            wearableLastUpdateMs = if (newHeartRate != null) System.currentTimeMillis() else currentDriverSignals.wearableLastUpdateMs
-        )
-
-        vehicleDataSource.updateManual(updatedVehicleState, updatedDriverSignals)
+        adbTelemetryController.setEnabled(enabled)
     }
 
     fun hideJsonPreview() {

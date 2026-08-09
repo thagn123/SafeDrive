@@ -123,6 +123,7 @@ fun SafeDriveNavHost(navController: NavHostController, container: SafeDriveConta
                             idGenerator = container.idGenerator,
                             clock = container.clock,
                             crashEvidenceAdapter = container.crashEvidenceAdapter,
+                            adbTelemetryController = container.adbTelemetryController,
                             cockpitSnapshot = container.cockpitSnapshot,
                         )
                     }

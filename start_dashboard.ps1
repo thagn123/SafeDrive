@@ -1,21 +1,24 @@
-# Khởi động Node.js backend và mở trình duyệt
+$ErrorActionPreference = "Stop"
+$WebUIDir = Join-Path $PSScriptRoot "telemetry-web-ui"
+$DashboardUrl = "http://127.0.0.1:3000"
 
-$WebUIDir = "telemetry-web-ui"
-
-# Kiểm tra thư mục
-if (!(Test-Path $WebUIDir)) {
-    Write-Host "Không tìm thấy thư mục $WebUIDir." -ForegroundColor Red
-    exit 1
+if (!(Test-Path -LiteralPath $WebUIDir)) {
+    throw "Không tìm thấy thư mục $WebUIDir."
 }
 
 Write-Host "Đang khởi động SafeDrive Control Center..." -ForegroundColor Cyan
-
-# Mở trình duyệt ẩn danh hoặc trình duyệt mặc định (chờ 2s để server khởi động)
-Start-Job -ScriptBlock {
-    Start-Sleep -Seconds 2
-    Start-Process "http://localhost:3000"
-} | Out-Null
-
-# Khởi động server
-cd $WebUIDir
-node telemetry_server.js
+Push-Location $WebUIDir
+try {
+    if (!(Test-Path -LiteralPath "node_modules")) {
+        npm.cmd install
+        if ($LASTEXITCODE -ne 0) { throw "npm install thất bại." }
+    }
+    Start-Job -ArgumentList $DashboardUrl -ScriptBlock {
+        param($Url)
+        Start-Sleep -Seconds 2
+        Start-Process $Url
+    } | Out-Null
+    node telemetry_server.js
+} finally {
+    Pop-Location
+}
