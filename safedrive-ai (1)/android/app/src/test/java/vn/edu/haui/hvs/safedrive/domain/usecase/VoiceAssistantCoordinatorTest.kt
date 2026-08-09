@@ -80,6 +80,7 @@ class VoiceAssistantCoordinatorTest {
         initialMessages: List<ChatMessage> = emptyList(),
         lastHealthStatus: StateFlow<HealthStatus?> = MutableStateFlow(null),
         voiceCompletionScope: kotlinx.coroutines.CoroutineScope = voiceScope,
+        disableContinuousModeForTest: Boolean = true,
     ): Scenario {
         val provider = object : GatewayProvider {
             override fun current() = gatewayOverride
@@ -108,7 +109,9 @@ class VoiceAssistantCoordinatorTest {
             ttsController = FakeTtsController(),
             externalScope = voiceScope,
             completionScope = voiceCompletionScope,
-        ).apply { forceDisableContinuousModeForTest = true }
+        ).apply {
+            forceDisableContinuousModeForTest = disableContinuousModeForTest
+        }
         if (autoStart) coordinator.start()
         return Scenario(coordinator, voiceController, conversationRepository, emergencyRepository, metricsRecorder, turnCoordinator)
     }
@@ -144,6 +147,23 @@ class VoiceAssistantCoordinatorTest {
             advanceUntilIdle()
 
             assertThat(scenario.voiceController.clearProcessingStateCallCount).isEqualTo(1)
+            assertThat(scenario.voiceController.state.value.state).isEqualTo(VoiceState.IDLE)
+        }
+
+    @Test
+    fun `production voice turn does not reopen microphone after final result`() =
+        runTest(mainDispatcherRule.dispatcher) {
+            val scenario = buildScenario(
+                turnScope = this,
+                voiceScope = backgroundScope,
+                disableContinuousModeForTest = false,
+            )
+
+            scenario.voiceController.emitFinalTranscript("Tốc độ hiện tại?", screen = "assistant")
+            advanceUntilIdle()
+            advanceTimeBy(5_000L)
+
+            assertThat(scenario.voiceController.startListeningCallCount).isEqualTo(0)
             assertThat(scenario.voiceController.state.value.state).isEqualTo(VoiceState.IDLE)
         }
 

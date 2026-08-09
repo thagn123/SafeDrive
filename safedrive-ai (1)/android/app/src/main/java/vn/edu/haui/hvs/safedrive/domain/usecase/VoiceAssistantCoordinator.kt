@@ -185,9 +185,11 @@ class VoiceAssistantCoordinator(
     private suspend fun route(event: VoiceInputEvent) {
         Log.d("SafeDriveVoiceDebug", "[VAC] route() received event: text='${event.text}', screen='${event.screen}', gen=${event.generation}")
 
-        // Enable continuous conversation mode for every production voice event. Assign rather than
-        // only setting true so the deterministic test override also clears any queued/recovered loop.
-        continuousMode = !forceDisableContinuousModeForTest
+        // A final transcript completes one bounded command session. Production used to enable the
+        // continuous auto-restart loop for every voice event here, which made the microphone reopen
+        // after the user had clearly finished speaking. Keep single-turn capture as the safe default;
+        // the wake-word service remains available for the next explicit "Mai ơi" invocation.
+        continuousMode = false
         lastScreen = event.screen
 
         // Check exit phrase BEFORE submitting — stop the loop immediately

@@ -6,12 +6,17 @@ import androidx.core.content.ContextCompat
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import vn.edu.haui.hvs.safedrive.core.common.AppClock
 import vn.edu.haui.hvs.safedrive.core.common.DefaultDispatcherProvider
 import vn.edu.haui.hvs.safedrive.core.common.DispatcherProvider
@@ -48,6 +53,7 @@ import vn.edu.haui.hvs.safedrive.domain.repository.GatewayProvider
 import vn.edu.haui.hvs.safedrive.domain.repository.PreferencesRepository
 import vn.edu.haui.hvs.safedrive.domain.repository.SafeDriveGateway
 import vn.edu.haui.hvs.safedrive.domain.repository.TtsController
+import vn.edu.haui.hvs.safedrive.domain.repository.TtsState
 import vn.edu.haui.hvs.safedrive.domain.repository.VehicleDataSource
 import vn.edu.haui.hvs.safedrive.domain.usecase.AssistantQueryUseCase
 import vn.edu.haui.hvs.safedrive.domain.usecase.AssistantTurnCoordinator
@@ -56,6 +62,7 @@ import vn.edu.haui.hvs.safedrive.domain.usecase.ObserveCockpitUseCase
 import vn.edu.haui.hvs.safedrive.domain.usecase.PendingPromptCoordinator
 import vn.edu.haui.hvs.safedrive.domain.usecase.SessionCoordinator
 import vn.edu.haui.hvs.safedrive.domain.usecase.VoiceAssistantCoordinator
+import vn.edu.haui.hvs.safedrive.domain.usecase.shouldStartProactiveOccupantCheck
 import vn.edu.haui.hvs.safedrive.feature.emergency.EmergencyReducer
 import vn.edu.haui.hvs.safedrive.vehicle.MockVehicleDataSource
 import vn.edu.haui.hvs.safedrive.vehicle.AdbTelemetryController
@@ -507,6 +514,43 @@ class SafeDriveContainer(context: Context, applicationScope: CoroutineScope) {
                 emergencyRepository.tick()
                 delay(EMERGENCY_TICK_MS)
             }
+        }
+
+        // Active occupant verification is an application action, not prose in the Assistant tab.
+        // Every new AWAITING_USER_RESPONSE episode is announced aloud and followed by a bounded
+        // microphone capture, regardless of which app tab is visible. collectLatest cancels the
+        // pending TTS/microphone hand-off immediately if USER_OK, cancellation or another state
+        // arrives, so a stale check can never reopen listening after the emergency has resolved.
+        applicationScope.launch {
+            emergencyRepository.activeSnapshot
+                .map { snapshot -> snapshot?.emergencyId to snapshot?.state }
+                .distinctUntilChanged()
+                .collectLatest { (emergencyId, state) ->
+                    if (!shouldStartProactiveOccupantCheck(state)) return@collectLatest
+
+                    if (appPreferences.value.ttsEnabled) {
+                        ttsController.speak(
+                            "SafeDrive đang chủ động kiểm tra. Bạn có ổn không? Hãy nói tôi ổn để hủy SOS.",
+                            utteranceId = idGenerator.next("tts_occupant_check"),
+                        )
+                        val speechStarted = withTimeoutOrNull(2_000L) {
+                            ttsController.state.first { it == TtsState.SPEAKING }
+                        } != null
+                        if (speechStarted) {
+                            withTimeoutOrNull(8_000L) {
+                                ttsController.state.first {
+                                    it != TtsState.SPEAKING && it != TtsState.INITIALIZING
+                                }
+                            }
+                        }
+                    }
+
+                    delay(200L)
+                    val current = emergencyRepository.activeSnapshot.value
+                    if (current?.emergencyId == emergencyId && shouldStartProactiveOccupantCheck(current?.state)) {
+                        voiceController.startListening(screen = "emergency")
+                    }
+                }
         }
     }
 }

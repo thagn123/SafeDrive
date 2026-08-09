@@ -145,7 +145,7 @@ private fun AwaitingResponseContent(remainingSeconds: Int, onConfirmSafe: () -> 
     Text("BƯỚC 2/3: CHỜ XÁC NHẬN TỪ NGƯỜI LÁI", style = MaterialTheme.typography.labelMedium, color = Color(0xFFFDBA74))
     Text("Bạn có ổn không?", style = MaterialTheme.typography.headlineMedium, color = Color.White)
     Text(
-        "Nếu bạn vẫn ổn, hãy nói \"Tôi ổn\" hoặc nhấn nút bên dưới.",
+        "SafeDrive đang tự phát câu hỏi và mở nghe phản hồi. Nếu bạn vẫn ổn, hãy nói \"Tôi ổn\" hoặc nhấn nút bên dưới.",
         style = MaterialTheme.typography.bodyMedium,
         color = Color(0xFFE2E8F0),
     )

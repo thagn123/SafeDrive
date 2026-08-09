@@ -65,7 +65,10 @@ class SafetyRiskEngine:
             return self._evaluation(
                 level="CRITICAL",
                 title="Sự kiện an toàn nghiêm trọng",
-                message="Tín hiệu va chạm và không phản hồi yêu cầu kiểm tra ngay tình trạng người trong xe.",
+                message=(
+                    "SafeDrive đã tự kích hoạt quy trình kiểm tra người trong xe: hỏi trực tiếp, "
+                    "lắng nghe phản hồi và đếm ngược SOS nếu không nhận được trả lời."
+                ),
                 reasons=["crash_detected", "occupant_no_response"],
                 evidence=evidence,
                 rest_level="INSUFFICIENT_DATA",
@@ -81,7 +84,10 @@ class SafetyRiskEngine:
             return self._evaluation(
                 level="HIGH",
                 title="Đã phát hiện tín hiệu va chạm",
-                message="Hệ thống đã nhận tín hiệu va chạm. Hãy kiểm tra người trong xe và tình trạng phương tiện.",
+                message=(
+                    "Hệ thống đã nhận tín hiệu va chạm và tự mở bước xác minh trước khi hỏi trực tiếp "
+                    "người trong xe."
+                ),
                 reasons=["crash_detected"],
                 evidence=evidence,
                 rest_level="INSUFFICIENT_DATA",
